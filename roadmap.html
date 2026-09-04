@@ -1,0 +1,305 @@
+<title>Groundwork</title>
+<style>
+  :root{
+    --paper:#edf0f4; --surface:#f8fafc; --surface-2:#e6eaf0;
+    --ink:#161a22; --ink-soft:#3c4552; --ink-mute:#697384;
+    --line:#d3d9e2; --line-soft:#e1e6ee;
+    --ember:#c24a16; --ember-deep:#9a3a10;
+    --steel:#3e5c78; --steel-soft:#7d93a8;
+    --belief:#6b5b95; --crimson:#b32d28; --green:#3f7d5a;
+    --shadow:0 1px 2px rgba(20,26,34,.06),0 8px 24px rgba(20,26,34,.06);
+  }
+  :root:not([data-theme="light"]){
+    @media (prefers-color-scheme:dark){
+      --paper:#0e1319; --surface:#161c25; --surface-2:#1d2530;
+      --ink:#e7ebf1; --ink-soft:#b9c1cd; --ink-mute:#8390a0;
+      --line:#28313d; --line-soft:#202832;
+      --ember:#e86a3a; --ember-deep:#c24a16;
+      --steel:#6d8aa6; --steel-soft:#4a6178;
+      --belief:#9b8bc8; --crimson:#e0574f; --green:#5aa77c;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0e1319; --surface:#161c25; --surface-2:#1d2530;
+    --ink:#e7ebf1; --ink-soft:#b9c1cd; --ink-mute:#8390a0;
+    --line:#28313d; --line-soft:#202832;
+    --ember:#e86a3a; --ember-deep:#c24a16;
+    --steel:#6d8aa6; --steel-soft:#4a6178;
+    --belief:#9b8bc8; --crimson:#e0574f; --green:#5aa77c;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Newsreader",Georgia,serif; font-size:18px; line-height:1.6; font-weight:380;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px; margin:0 auto; padding:0 24px}
+  .measure{max-width:66ch}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+  h1,h2,h3{font-family:"Fraunces","Newsreader",serif; letter-spacing:-.01em; text-wrap:balance}
+
+  header{padding:64px 0 8px}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.2em; text-transform:uppercase; color:var(--ember); font-weight:500}
+  h1{font-size:clamp(2.4rem,6vw,3.8rem); line-height:1.02; margin:.3em 0 .35em}
+  .dek{font-size:clamp(1.1rem,2.3vw,1.32rem); color:var(--ink-soft); max-width:46ch; line-height:1.45}
+
+  section{padding:44px 0}
+  section + section{border-top:1px solid var(--line-soft)}
+  h2{font-size:clamp(1.5rem,3.6vw,2.1rem); margin:0 0 .5em}
+  .kick{font-family:"IBM Plex Mono",monospace; font-size:12.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ember); font-weight:500; margin-bottom:8px}
+  p{margin:0 0 1.05em} p.measure{color:var(--ink-soft)}
+  strong{font-weight:600; color:var(--ink)} em.t{font-style:italic; color:var(--ember-deep)}
+  :root[data-theme="dark"] em.t,:root:not([data-theme="light"]) em.t{color:var(--ember)}
+
+  /* principle cards */
+  .rules{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:8px}
+  .rule{background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--ember); border-radius:12px; padding:18px 18px; box-shadow:var(--shadow)}
+  .rule .rn{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--ink-mute); letter-spacing:.08em}
+  .rule .rt{font-family:"Fraunces",serif; font-weight:600; font-size:1.08rem; margin:3px 0 7px}
+  .rule p{margin:0; font-size:.92rem; color:var(--ink-soft)}
+
+  /* diagram */
+  figure{margin:14px 0 0; padding:22px 18px; background:var(--surface); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow)}
+  svg{display:block; width:100%; height:auto; overflow:visible}
+  figcaption{font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-mute); margin-top:14px; text-align:center; letter-spacing:.03em}
+
+  /* phase timeline */
+  .phases{display:flex; flex-direction:column; gap:0; margin-top:10px; border-left:2px solid var(--line); padding-left:0}
+  .phase{position:relative; padding:20px 0 20px 30px; border-bottom:1px solid var(--line-soft)}
+  .phase:last-child{border-bottom:0}
+  .phase::before{content:""; position:absolute; left:-7px; top:26px; width:12px; height:12px; border-radius:50%; background:var(--surface); border:2px solid var(--ink-mute)}
+  .phase.done::before{background:var(--green); border-color:var(--green)}
+  .phase.now::before{background:var(--ember); border-color:var(--ember); box-shadow:0 0 0 4px color-mix(in srgb,var(--ember) 22%,transparent)}
+  .phase .ph{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:8px}
+  .phase .pid{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-mute); letter-spacing:.08em}
+  .phase .pt{font-family:"Fraunces",serif; font-weight:600; font-size:1.28rem}
+  .phase .badge{font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; padding:3px 8px; border-radius:20px}
+  .badge.done{color:var(--green); background:color-mix(in srgb,var(--green) 15%,transparent)}
+  .badge.now{color:var(--ember); background:color-mix(in srgb,var(--ember) 15%,transparent)}
+  .badge.later{color:var(--steel); background:color-mix(in srgb,var(--steel) 16%,transparent)}
+  .phase .goal{color:var(--ink-soft); margin:0 0 12px; max-width:64ch}
+  .meta{display:grid; grid-template-columns:auto 1fr; gap:6px 14px; font-size:.9rem; align-items:baseline}
+  .meta .k{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-mute); padding-top:2px}
+  .meta .v{color:var(--ink-soft)}
+  .meta .v.gate{color:var(--ink)}
+  .meta .v.gate b{color:var(--ember-deep); font-weight:600}
+  :root[data-theme="dark"] .meta .v.gate b,:root:not([data-theme="light"]) .meta .v.gate b{color:var(--ember)}
+
+  /* contract code block */
+  pre{margin:14px 0 0; padding:22px 22px; background:var(--surface-2); border:1px solid var(--line); border-radius:12px; overflow-x:auto;
+    font-family:"IBM Plex Mono",monospace; font-size:13px; line-height:1.75; color:var(--ink-soft)}
+  pre .k{color:var(--ember-deep); font-weight:500} :root[data-theme="dark"] pre .k,:root:not([data-theme="light"]) pre .k{color:var(--ember)}
+  pre .c{color:var(--ink-mute)} pre .b{color:var(--ink); font-weight:500}
+
+  /* decisions */
+  .dec{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:8px}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px 18px; box-shadow:var(--shadow)}
+  .card .ct{font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--steel); margin-bottom:6px}
+  .card p{margin:0; font-size:.93rem; color:var(--ink-soft)}
+  .card .rec{color:var(--ink); font-weight:500}
+
+  footer{border-top:1px solid var(--line); margin-top:20px; padding:30px 0 70px; font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-mute); line-height:1.7}
+
+  @media (max-width:760px){ .rules,.dec{grid-template-columns:1fr} }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..600;1,9..144,400..560&family=Newsreader:ital,opsz,wght@0,6..72,320..500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Contribution-Indexed World Simulator · Build Plan</div>
+    <h1>Groundwork</h1>
+    <p class="dek">The mechanics are proven. This is how we build the real thing — one brain, many bodies — without wasting a step, and without touching Unreal until we know it's fun.</p>
+  </header>
+
+  <section>
+    <div class="kick">The organizing principle</div>
+    <h2>One brain, many bodies</h2>
+    <p class="measure">The simulation is built once, as an <strong>engine-agnostic core</strong> that knows nothing about rendering, Unreal, or 2D. Every game — the throwaway 2D fun-test now, the UE5 world later — is just a <em class="t">body</em> that speaks to the same <em class="t">brain</em> through one fixed interface. That's what makes it plug-and-play. It also means the 2D game is never wasted work: it's the test harness for the exact core Unreal will run.</p>
+
+    <div class="rules">
+      <div class="rule"><div class="rn">Rule 01</div><div class="rt">One core, one truth</div><p>The Python model stays the reference &amp; balancing oracle forever; the C++ core is the shipping version. Automated golden tests keep them identical — never two implementations drifting apart.</p></div>
+      <div class="rule"><div class="rn">Rule 02</div><div class="rt">The wall</div><p>Every action — player or NPC — passes through the measured Intent interface the Accountant observes. Nothing reaches in and mutates state directly. It's what keeps contribution honest and lets the game double as a research testbed.</p></div>
+      <div class="rule"><div class="rn">Rule 03</div><div class="rt">LLM only at the edges</div><p>Language models render dialogue and propose world-changes — nothing more. Never in the tick loop, never load-bearing state. The deterministic sim is always the fact-checker.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kick">Architecture</div>
+    <h2>What plugs into what</h2>
+    <figure>
+      <svg viewBox="0 0 900 470" role="img" aria-label="Architecture diagram. A central engine-agnostic SimCore holds the economy, accountant, lineage, knowledge, world-state, and world-change modules. The Python reference validates it via parity tests. An LLM connects only at the edge, validated. Below, the 2D game and the UE5 plugin both connect to SimCore through one shared contract: intents up, snapshot and events down.">
+        <defs>
+          <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--ink-mute)"/></marker>
+          <marker id="are" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--ember)"/></marker>
+        </defs>
+
+        <!-- Python reference -->
+        <rect x="20" y="26" width="200" height="70" rx="11" fill="var(--surface-2)" stroke="var(--line)"/>
+        <text x="120" y="55" text-anchor="middle" font-family="Fraunces,serif" font-weight="600" font-size="16" fill="var(--ink)">Python reference</text>
+        <text x="120" y="76" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="11" fill="var(--ink-mute)">oracle · balancing</text>
+        <path d="M180,96 C230,150 260,150 300,175" fill="none" stroke="var(--ink-mute)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+        <text x="196" y="145" font-family="IBM Plex Mono,monospace" font-size="10.5" fill="var(--ink-mute)">parity tests</text>
+
+        <!-- LLM edge -->
+        <rect x="680" y="26" width="200" height="70" rx="11" fill="var(--surface-2)" stroke="var(--line)"/>
+        <text x="780" y="55" text-anchor="middle" font-family="Fraunces,serif" font-weight="600" font-size="16" fill="var(--belief)">LLM — edge only</text>
+        <text x="780" y="76" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="11" fill="var(--ink-mute)">propose · render</text>
+        <path d="M720,96 C670,150 640,150 600,175" fill="none" stroke="var(--ink-mute)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+        <text x="628" y="145" font-family="IBM Plex Mono,monospace" font-size="10.5" fill="var(--ink-mute)">validated →</text>
+
+        <!-- SimCore -->
+        <rect x="250" y="176" width="400" height="132" rx="14" fill="color-mix(in srgb,var(--ember) 8%,var(--surface))" stroke="var(--ember)" stroke-width="1.6"/>
+        <text x="450" y="205" text-anchor="middle" font-family="Fraunces,serif" font-weight="600" font-size="19" fill="var(--ink)">SimCore</text>
+        <text x="450" y="224" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10.5" fill="var(--ink-mute)">engine-agnostic · deterministic · serializable</text>
+        <g font-family="IBM Plex Mono,monospace" font-size="10.5" fill="var(--ink-soft)">
+          <rect x="266" y="238" width="112" height="24" rx="6" fill="var(--surface-2)" stroke="var(--line)"/><text x="322" y="254" text-anchor="middle">economy</text>
+          <rect x="386" y="238" width="128" height="24" rx="6" fill="var(--surface-2)" stroke="var(--line)"/><text x="450" y="254" text-anchor="middle">accountant</text>
+          <rect x="522" y="238" width="112" height="24" rx="6" fill="var(--surface-2)" stroke="var(--line)"/><text x="578" y="254" text-anchor="middle">lineage</text>
+          <rect x="266" y="270" width="112" height="24" rx="6" fill="var(--surface-2)" stroke="var(--line)"/><text x="322" y="286" text-anchor="middle">knowledge</text>
+          <rect x="386" y="270" width="128" height="24" rx="6" fill="var(--surface-2)" stroke="var(--line)"/><text x="450" y="286" text-anchor="middle">world-state</text>
+          <rect x="522" y="270" width="112" height="24" rx="6" fill="var(--surface-2)" stroke="var(--line)" stroke-dasharray="3 3"/><text x="578" y="286" text-anchor="middle" fill="var(--ink-mute)">world-Δ</text>
+        </g>
+
+        <!-- contract band -->
+        <rect x="250" y="342" width="400" height="30" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+        <text x="450" y="361" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="11.5" fill="var(--ink)" font-weight="500">THE CONTRACT</text>
+        <path d="M330,342 L330,308" fill="none" stroke="var(--ember)" stroke-width="1.6" marker-end="url(#are)"/>
+        <text x="338" y="330" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ember)">intents ↑</text>
+        <path d="M570,308 L570,342" fill="none" stroke="var(--ink-mute)" stroke-width="1.6" marker-end="url(#ar)"/>
+        <text x="470" y="330" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-mute)">snapshot + events ↓</text>
+
+        <!-- bodies -->
+        <rect x="120" y="410" width="230" height="50" rx="11" fill="var(--surface)" stroke="var(--line)"/>
+        <text x="235" y="432" text-anchor="middle" font-family="Fraunces,serif" font-weight="600" font-size="15" fill="var(--ink)">2D game</text>
+        <text x="235" y="450" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-mute)">prove it's fun · now</text>
+        <rect x="550" y="410" width="230" height="50" rx="11" fill="var(--surface)" stroke="var(--line)"/>
+        <text x="665" y="432" text-anchor="middle" font-family="Fraunces,serif" font-weight="600" font-size="15" fill="var(--ink)">Unreal plugin</text>
+        <text x="665" y="450" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10" fill="var(--ink-mute)">the real game · later</text>
+        <path d="M235,410 L300,372" fill="none" stroke="var(--ink-mute)" stroke-width="1.4" marker-end="url(#ar)"/>
+        <path d="M665,410 L600,372" fill="none" stroke="var(--ink-mute)" stroke-width="1.4" marker-end="url(#ar)"/>
+      </svg>
+      <figcaption>Both games speak the same contract. Swap the 2D renderer for Unreal and the brain is unchanged.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="kick">The path</div>
+    <h2>Seven phases, gated — not rushed</h2>
+    <p class="measure">Each phase has one job and one <b>gate</b> that must pass before the next begins. We take as long as each needs. The pivotal ordering: <strong>fun is proven in 2D before the C++ core is ever written</strong> — because the model is already Python, the cheapest possible fun-test is a 2D game on it, and we only pay for the plug-and-play core once the design has earned it.</p>
+
+    <div class="phases">
+      <div class="phase done">
+        <div class="ph"><span class="pid">Phase 0</span><span class="pt">Foundations</span><span class="badge done">Done</span></div>
+        <p class="goal">Prove the mechanics actually work.</p>
+        <div class="meta">
+          <span class="k">Built</span><span class="v">Economy + contribution index + lineage; knowledge propagation with the belief→behaviour→world loop; the dependency/verification dynamics that make information matter. Two explainer artifacts + a playable demo.</span>
+          <span class="k">Gate</span><span class="v gate">✓ Met — validated against clean control scenarios.</span>
+        </div>
+      </div>
+
+      <div class="phase now">
+        <div class="ph"><span class="pid">Phase 1</span><span class="pt">Lock the model &amp; the contract</span><span class="badge now">Next</span></div>
+        <p class="goal">Merge the scattered prototypes into one clean reference sim, add the pieces the design still needs, and freeze the interface everything will speak.</p>
+        <div class="meta">
+          <span class="k">Do</span><span class="v">Integrate economy + accountant + propagation into a single reference (not separate demos). Add capital goods (income-generating assets) and the dependent / inelastic subgroup. Define &amp; freeze the SimCore contract — Intent / Snapshot / Event / Query schemas.</span>
+          <span class="k">Ship</span><span class="v"><span class="mono">simcore-ref</span> (Python) · contract spec · regression suite (the golden master).</span>
+          <span class="k">Gate</span><span class="v gate">The reference reproduces <b>every</b> validated result; the contract is reviewed and frozen.</span>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="ph"><span class="pid">Phase 2</span><span class="pt">Prove it's fun</span><span class="badge later">2D</span></div>
+        <p class="goal">A lightweight 2D game on the Python model — talking only through the contract — built to answer one question: is this fun to actually play?</p>
+        <div class="meta">
+          <span class="k">Do</span><span class="v">Build the 2D game (recommended: Python + pygame/arcade — zero porting on the existing model). All effort on the loop, feedback, readability, pacing. Not the core. Playtest with real people; iterate the <em>design</em>.</span>
+          <span class="k">Ship</span><span class="v">Playable 2D vertical slice + playtest report.</span>
+          <span class="k">Gate</span><span class="v gate"><b>The go/no-go.</b> If the loop isn't fun for 30+ minutes, fix the design here — before any C++ or Unreal spend. This phase can veto everything downstream.</span>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="ph"><span class="pid">Phase 3</span><span class="pt">The plug-and-play core</span><span class="badge later">C++</span></div>
+        <p class="goal">Port the fun-proven model to a C++ library with zero engine dependencies.</p>
+        <div class="meta">
+          <span class="k">Do</span><span class="v">Deterministic, seeded, serializable, tick-based C++. Clean C++ API + a C-ABI / DLL boundary for portability. Python stays the oracle &amp; balancing harness.</span>
+          <span class="k">Ship</span><span class="v"><span class="mono">simcore</span> C++ library + parity test suite.</span>
+          <span class="k">Gate</span><span class="v gate">C++ output ≡ Python reference, bit-for-bit, on the whole regression suite.</span>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="ph"><span class="pid">Phase 4</span><span class="pt">The UE5 plug</span><span class="badge later">Unreal</span></div>
+        <p class="goal">A thin adapter so your Unreal game can drive the core and render it — nothing more.</p>
+        <div class="meta">
+          <span class="k">Do</span><span class="v">A WorldSubsystem owns &amp; ticks SimCore; Blueprint-callable SubmitIntent / Query; events bridged to gameplay; your AActors mapped to agent IDs. You build the world; the plugin is the brain.</span>
+          <span class="k">Ship</span><span class="v">UE5 plugin + a minimal proof scene (economy running, contribution scored, one player intent working end-to-end).</span>
+          <span class="k">Gate</span><span class="v gate">You can drive the sim from Blueprint and watch it react. Presentation and simulation stay cleanly separated.</span>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="ph"><span class="pid">Phase 5</span><span class="pt">Deepen the systems</span><span class="badge later">Iterative</span></div>
+        <p class="goal">Grow the world one validated thread at a time, always through the same pipeline.</p>
+        <div class="meta">
+          <span class="k">Do</span><span class="v">Knowledge-gated NPC dialogue (LLM at the edge, renders held beliefs into speech, never touches state). The hybrid world-change engine: authored causal graph + LLM proposes new nodes/edges + sandboxed sim validates before promotion. Further domains — trade routes, factions/politics — each proven in Python → validated → ported → exposed.</span>
+          <span class="k">Gate</span><span class="v gate">Each system earns its place in the cheap harness before it costs C++/Unreal time.</span>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="ph"><span class="pid">Phase 6</span><span class="pt">The real game</span><span class="badge later">Horizon</span></div>
+        <p class="goal">Open world, storyline, art, polish. The body around a stable brain.</p>
+        <div class="meta">
+          <span class="k">Note</span><span class="v">Deliberately last. The core is proven and stable long before this; here it's about content and craft.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kick">The contract</div>
+    <h2>What “plug into UE5” actually means</h2>
+    <p class="measure">The interface SimCore exposes — the same one the 2D game and Unreal both speak. Your game never sees the core's internals; only this.</p>
+    <pre><span class="c">// init</span>
+<span class="k">SimCore</span>(config, seed)
+
+<span class="c">// drive — the ONLY way to affect the world</span>
+<span class="k">submitIntent</span>(agentId, intent)     <span class="c">// Gather · Trade · Build · Move · Speak(claim) …</span>
+
+<span class="c">// tick — deterministic</span>
+<span class="k">step</span>(dt)
+
+<span class="c">// read</span>
+<span class="k">snapshot</span>()        <span class="c">→ render state</span>
+<span class="k">drainEvents</span>()     <span class="c">→ what happened this tick (trade cleared, belief shifted,</span>
+                    <span class="c">  contribution paid, shortage, rumour spread …)</span>
+<span class="k">query</span>(...)        <span class="c">→ score · an agent's beliefs (for dialogue) · market state</span>
+
+<span class="c">// persist</span>
+<span class="k">serialize</span>() / <span class="k">load</span>()
+
+<span class="c">// edges — async, outside the tick, always validated first</span>
+<span class="k">proposeWorldChange</span>(ctx)   <span class="k">renderDialogue</span>(belief, prompt)
+
+<span class="c">// on the UE5 side</span>
+<span class="b">USimWorldSubsystem</span> owns + ticks the core · Blueprint nodes for intents/queries
+                   · dispatches events · maps AActor ⇆ agentId</pre>
+  </section>
+
+  <section>
+    <div class="kick">Still open</div>
+    <h2>Two decisions for later</h2>
+    <p class="measure">Neither blocks Phase 1. Flagging them so they're not forgotten — we settle them alongside the config details.</p>
+    <div class="dec">
+      <div class="card"><div class="ct">2D prototype tech</div><p><span class="rec">Recommended: Python + pygame/arcade</span>, directly on the existing model — the fastest possible path to the fun answer, no porting. Alternatives (Godot, a richer web build) cost a reimplementation we'd only want if there's a specific reason.</p></div>
+      <div class="card"><div class="ct">Who writes the C++ core</div><p><span class="rec">I can produce the C++ SimCore</span> against the Python oracle (parity-tested) while you focus on the Unreal game and world. We'll also decide the boundary — native C++ module vs a C-ABI DLL — and whether determinism needs fixed-point math for networking/replay down the line.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    Contribution-Indexed World Simulator — build plan, revised as we go.<br>
+    Prove each mechanic in the cheap harness before it costs engine time · the sim is always the fact-checker · fun is a gate, not an afterthought.
+  </footer>
+</div>

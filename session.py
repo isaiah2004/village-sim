@@ -1,0 +1,338 @@
+"""
+GameSession -- the engine-agnostic RULES of the Contribution game.
+
+The middle layer of "one brain, many bodies":
+
+    SimCore (the simulation)  <-  GameSession (this game's rules)  <-  a View
+
+GameSession talks to the world ONLY through the SimCore contract, and it renders
+NOTHING -- no pygame, no colours, no pixels. It owns the day/turn flow, the action
+economy (stamina), win/lose, the realized-effect impact ledger, the counterfactual
+"what if you weren't here" baseline, and a SEMANTIC news feed: each line carries a
+tag naming its MEANING ('contribution', 'cold', 'word', ...), never a colour, so a
+View maps tags to colour -- or a pixel-art body maps them to sprites and sounds.
+
+Any presentation drives the SAME session: call its action methods when the player
+acts (click a button, or walk a character up to the woodlot and press A), read its
+state to draw the world. Swapping the whole skin -- click-sim today, a top-down
+Pokemon-style tile game tomorrow -- means writing a new View against this API and
+changing nothing here or in the sim.
+
+Interaction-model-agnostic on purpose: the session exposes intent ("gather wood",
+"warn", "trade") and guards ("can I build a woodlot right now?"), not input. How
+the player expresses that intent -- a keypress, a mouse click, a character walking
+onto a tile -- is the View's business.
+"""
+from __future__ import annotations
+
+import contract as C
+from agents import Dependent, MarketMaker, SpawnSpec, Villager
+from config import Config, Resource
+
+
+def make_config() -> Config:
+    cfg = Config()
+    cfg.years = 1.0
+    cfg.capital_goods_enabled = True
+    cfg.reward_at_fair_value = True
+    return cfg
+
+
+def default_population(cfg: Config):
+    # a deeper-pocketed trading post so selling clears more per day (game feel;
+    # the validated scenarios keep the default shallow market)
+    return [SpawnSpec(Villager, 8, id_prefix="v"),
+            SpawnSpec(Dependent, 3, id_prefix="d"),
+            SpawnSpec(MarketMaker, 1, id_prefix="mk",
+                      kwargs={"daily_volume": 16.0, "target_inventory": 40.0})]
+
+
+# The vocabulary of news tags a View must know how to present. Documented here so
+# a new body has one place to look. (A View may style any subset; unknown tags
+# should fall back to a neutral style.)
+NEWS_TAGS = (
+    "system", "contribution", "sold", "bought", "unsold", "cold",
+    "dependent_cold", "word", "hint", "asset", "starving", "food_low",
+)
+
+
+class GameSession:
+    HOARD_HINT_WOOD = 45.0        # stockpile that triggers the "bank it" hint
+    STARVE_DAYS = 3               # days without food before you die
+
+    def __init__(self, config_factory=make_config, population_factory=default_population):
+        self._mk_cfg = config_factory
+        self._mk_pop = population_factory
+        self.new_game()
+
+    # ------------------------------------------------------------------ lifecycle
+    def new_game(self) -> None:
+        self.cfg = self._mk_cfg()
+        self.core = SimCoreFactory(self.cfg, self._mk_pop)
+        self.snap = self.core.begin_turn()
+        self.stamina_used = 0
+        self.queued: list[str] = []
+        self.news: list[tuple[str, str]] = []      # (text, semantic tag)
+        self.cold_today: set[str] = set()
+        self.warned_today = False
+        self.warn_ever = False
+        self.starving = 0
+        self.warn_days: list[int] = []      # exact days you spoke the warning
+        self.pending_sell: dict = {}
+        # realized-effect ledger: consumer_id -> {times,total,kind} -- WHO your
+        # wood actually kept warm across the year (the felt score).
+        self.impact: dict = {}
+        self.wood_awareness = 0.0
+        self.wood_roots = 0
+        self._aware_bucket = 0
+        self.hoard_hinted = False
+        self.phase = "playing"                      # 'playing' | 'ended'
+        self.over_reason = ""
+        self.result: dict | None = None
+        self._log("A new year begins. Winter is far off -- but only you can see it coming.", "system")
+
+    # --------------------------------------------------------------------- reads
+    def me(self):
+        return next(a for a in self.snap.agents if a.is_player)
+
+    def market(self, r: Resource):
+        return next(m for m in self.snap.markets if m.resource == r)
+
+    @property
+    def day(self) -> int:
+        return self.core.day
+
+    @property
+    def season(self) -> str:
+        return self.snap.season
+
+    @property
+    def ended(self) -> bool:
+        return self.phase == "ended"
+
+    def stamina_left(self) -> int:
+        return int(round(self.me().stamina)) - self.stamina_used
+
+    def wl_cost(self, level: int) -> float:
+        return self.cfg.woodlot_wood_cost * (level + 1)
+
+    def _log(self, text: str, tag: str = "system") -> None:
+        self.news.append((text, tag))
+        self.news = self.news[-8:]
+
+    # ------------------------------------------------------------------- guards
+    def can_act(self) -> bool:
+        return self.phase == "playing"
+
+    def can_gather(self) -> bool:
+        return self.can_act() and self.stamina_left() > 0
+
+    def can_build_woodlot(self) -> bool:
+        me = self.me()
+        return (self.can_act() and self.stamina_left() > 0
+                and me.woodlot_level < self.cfg.woodlot_max_level
+                and me.wood >= self.wl_cost(me.woodlot_level))
+
+    def can_warn(self) -> bool:
+        return self.can_act() and not self.warned_today and self.stamina_left() > 0
+
+    def can_fast_forward(self) -> bool:
+        return self.can_act() and self.season != "winter"
+
+    def can_sell(self, r: Resource) -> bool:
+        me = self.me()
+        held = me.wood if r == Resource.WOOD else me.food
+        keep = 2.5 if r == Resource.WOOD else 3.5
+        return self.can_act() and held > keep
+
+    # ------------------------------------------------------------------ actions
+    # Each returns True if the intent was accepted. A View calls these; it need
+    # not pre-check guards (they re-check), but the guards let it grey out UI.
+    def gather(self, r: Resource) -> bool:
+        if not self.can_gather():
+            return False
+        self.core.submit(C.Gather(r)); self.stamina_used += 1
+        self.queued.append(f"gather {r.value}")
+        return True
+
+    def build_woodlot(self) -> bool:
+        if not self.can_build_woodlot():
+            return False
+        me = self.me()
+        self.core.submit(C.BuildWoodlot()); self.stamina_used += 1
+        self.queued.append("woodlot" if me.woodlot_level == 0 else "upgrade woodlot")
+        return True
+
+    def warn(self) -> bool:
+        if not self.can_warn():
+            return False
+        # spend the day carrying the word instead of gathering: a real choice
+        self.core.submit(C.Speak(Resource.WOOD, 0.85, True, "player_warning", authority=0.85))
+        self.warned_today = True; self.warn_ever = True; self.stamina_used += 1
+        self.warn_days.append(self.day)
+        self.queued.append("warn of winter")
+        return True
+
+    def trade(self, r: Resource, side: str) -> bool:
+        if not self.can_act():
+            return False
+        me = self.me(); px = self.market(r).ref_price
+        if side == "sell":
+            keep = 2.0 if r == Resource.WOOD else 3.0
+            qty = (me.wood if r == Resource.WOOD else me.food) - keep
+            if qty <= 0.5:
+                return False
+            self.core.submit(C.Trade(r, "sell", qty, px * 0.95))
+            self.queued.append(f"sell {qty:.0f} {r.value}")
+            self.pending_sell[r] = self.pending_sell.get(r, 0.0) + qty
+            return True
+        self.core.submit(C.Trade(r, "buy", 3.0, px * 1.15))
+        self.queued.append(f"buy 3 {r.value}")
+        return True
+
+    def fast_forward(self) -> None:
+        if not self.can_fast_forward():
+            return
+        guard = 0
+        while (self.phase == "playing" and not self.core.done
+               and self.season != "winter" and guard < 200):
+            # auto-subsist: gather enough food to feed yourself AND the woodlot
+            for _ in range(min(3, self.stamina_left())):
+                self.core.submit(C.Gather(Resource.FOOD)); self.stamina_used += 1
+            self.end_day(); guard += 1
+
+    def end_day(self) -> None:
+        if self.phase != "playing":
+            return
+        self.core.commit_turn()
+        self._process_events(self.core.drain_events())
+        self.stamina_used = 0; self.queued = []; self.pending_sell = {}
+        self.warned_today = False
+        if self.starving >= self.STARVE_DAYS:
+            self._end("You starved. Even the one who could see the winter must eat.")
+        elif self.core.done:
+            self._end("")
+        else:
+            self.snap = self.core.begin_turn()
+            me = self.me()
+            if me.food < 2.0:
+                self._log("Food is running low -- gather or buy food.", "food_low")
+            # reframe over-gathering: a big stockpile isn't waste, it's banked for winter
+            if self.season != "winter" and me.wood > self.HOARD_HINT_WOOD and not self.hoard_hinted:
+                self._log("You're sitting on a lot of wood. Good -- in winter it's worth "
+                          "far more, and those who can't cut their own will need it. Hold it.", "hint")
+                self.hoard_hinted = True
+
+    # ---------------------------------------------------------- end / counterfactual
+    def _end(self, reason: str) -> None:
+        self.over_reason = reason
+        self.phase = "ended"
+        base = self._ghost_winter_unmet()                 # you were never here
+        wu = self.core.welfare().get("winter_village_unmet_wood", 0.0)
+        # isolate the WARNING lever: what your words alone were worth, with no
+        # resource actions on either side -- a clean, measured marginal effect.
+        warning_effect = 0.0
+        if self.warn_days:
+            warn_only = self._ghost_winter_unmet(self.warn_days)
+            warning_effect = base - warn_only
+        self.result = {
+            "contribution": self.core.score("PLAYER"),
+            "winter_unmet": wu,
+            "baseline_unmet": base,
+            "saved": base - wu,
+            "kept_warm": len(self.impact),
+            "times": sum(r["times"] for r in self.impact.values()),
+            "dependents": sum(1 for r in self.impact.values() if r["kind"] == "dependent"),
+            "warned": bool(self.warn_days),
+            "warning_effect": warning_effect,
+            "survived": not reason,
+            "reason": reason,
+        }
+
+    def _ghost_winter_unmet(self, warn_days=()) -> float:
+        """Run a parallel SimCore in which the player takes NO resource actions,
+        speaking the winter warning only on `warn_days`. With warn_days empty this
+        is 'you were never here'; with your actual warning days it isolates what
+        your information alone did. Pure-contract -- no reach into the engine."""
+        warn_days = set(warn_days)
+        cfg = self._mk_cfg()
+        ghost = SimCoreFactory(cfg, self._mk_pop)
+        while not ghost.done:
+            if ghost.day in warn_days:
+                ghost.begin_turn()
+                ghost.submit(C.Speak(Resource.WOOD, 0.85, True, "player_warning", authority=0.85))
+                ghost.commit_turn()
+            else:
+                ghost.step()
+        return ghost.welfare().get("winter_village_unmet_wood", 0.0)
+
+    # --------------------------------------------------------------- event digest
+    @staticmethod
+    def _who(kind: str) -> str:
+        return {"dependent": "a dependent household", "villager": "a neighbour",
+                "market_maker": "the trading post", "player": "yourself"}.get(kind, "someone")
+
+    def _process_events(self, events) -> None:
+        self.cold_today = set(); earned = 0.0; cold = set(); starved = False
+        sold: dict = {}
+        detail: dict = {}          # consumer_id -> [amount, kind, season, rate]
+        for ev in events:
+            if isinstance(ev, C.ContributionPaid) and ev.agent_id == "PLAYER":
+                earned += ev.amount
+            elif isinstance(ev, C.ContributionDetail) and ev.producer_id == "PLAYER":
+                d = detail.setdefault(ev.consumer_id, [0.0, ev.consumer_kind, ev.season, ev.rate])
+                d[0] += ev.amount; d[3] = max(d[3], ev.rate)
+                rec = self.impact.setdefault(ev.consumer_id, {"total": 0.0, "times": 0, "kind": ev.consumer_kind})
+                rec["total"] += ev.amount; rec["times"] += 1; rec["kind"] = ev.consumer_kind
+            elif isinstance(ev, C.BeliefState) and ev.resource == Resource.WOOD:
+                self.wood_awareness = ev.awareness; self.wood_roots = ev.distinct_roots
+            elif isinstance(ev, C.Shortage) and ev.resource == Resource.WOOD:
+                self.cold_today.add(ev.agent_id)
+                if ev.agent_id != "PLAYER":
+                    cold.add(ev.agent_id)
+            elif isinstance(ev, C.Shortage) and ev.resource == Resource.FOOD and ev.agent_id == "PLAYER":
+                starved = True
+            elif isinstance(ev, C.AssetBuilt) and ev.agent_id == "PLAYER":
+                self._log("Your woodlot is established -- it yields wood every day now.", "asset")
+            elif isinstance(ev, C.Settled):
+                if ev.side == "sell":
+                    sold[ev.resource] = sold.get(ev.resource, 0.0) + ev.qty
+                    self._log(f"Sold {ev.qty:.0f} {ev.resource.value} for {ev.value:.0f}g "
+                              f"(@ {ev.value/max(ev.qty,1e-6):.1f}).", "sold")
+                else:
+                    self._log(f"Bought {ev.qty:.0f} {ev.resource.value} for {ev.value:.0f}g.", "bought")
+        # tell the player when a sell order did NOT clear (and why)
+        for r, req in self.pending_sell.items():
+            unsold = req - sold.get(r, 0.0)
+            if unsold > 0.5:
+                self._log(f"{unsold:.0f} {r.value} didn't sell -- no buyers (it isn't scarce now).", "unsold")
+        self.starving = self.starving + 1 if starved else 0
+        if starved:
+            self._log(f"You have no food -- STARVING ({self.starving}/{self.STARVE_DAYS} days).", "starving")
+        # the FELT contribution: name who you kept warm and why it was worth it
+        if detail:
+            items = sorted(detail.items(), key=lambda kv: -kv[1][0])
+            total = sum(v[0] for _, v in items)
+            _, (amt, kind, seas, rate) = items[0]
+            extra = f" (+{len(items)-1})" if len(items) > 1 else ""
+            self._log(f"+{total:.0f} kept {self._who(kind)}{extra} warm -- {seas} fair {rate:.0f}/u.", "contribution")
+        elif earned > 0.05:
+            self._log(f"+{earned:.0f} contribution -- your wood met a need.", "contribution")
+        # word of winter spreading: milestone lines as awareness climbs
+        if self.warn_ever:
+            bucket = int(self.wood_awareness * 4)      # quarters
+            if bucket > self._aware_bucket and self.wood_awareness > 0.05:
+                self._aware_bucket = bucket
+                self._log(f"Word spreads -- {self.wood_awareness*100:.0f}% now expect a hard winter.", "word")
+        deps = {c for c in cold if c.startswith("d")}
+        if deps:
+            self._log(f"{len(deps)} dependent household(s) went cold.", "dependent_cold")
+        elif cold:
+            self._log(f"{len(cold)} villager(s) went cold.", "cold")
+
+
+def SimCoreFactory(cfg: Config, mk_pop):
+    """Build a propagation-enabled SimCore for `cfg` with its population. Kept as
+    a tiny factory so both the live game and the counterfactual build identically."""
+    from simcore import SimCore
+    return SimCore(config=cfg, propagation=True, population=mk_pop(cfg))

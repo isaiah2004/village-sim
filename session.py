@@ -98,6 +98,67 @@ class GameSession:
     def market(self, r: Resource):
         return next(m for m in self.snap.markets if m.resource == r)
 
+    # --------------------------------------------------------------- npc voices
+    # The village speaks its own belief. A villager's line is derived ONLY from
+    # what they actually believe about the winter -- read straight through the
+    # contract via SimCore.belief() -- so the words a body shows are the same
+    # scarcity signal that drives their panic-buying underneath. This is a pure
+    # read: rendering belief, never changing it. A line carries a semantic tag
+    # (never a colour), so a View skins it -- text bubble, sprite barks, audio.
+    def villager_line(self, agent_id: str) -> tuple[str, str]:
+        """(spoken_text, semantic_tag) for one agent, reflecting their real
+        belief about the coming winter (wood scarcity). Confidence sets the
+        register -- rumour heard once vs. conviction independently corroborated;
+        magnitude sets how dire. Dependents add that they cannot cut their own
+        wood, the reason they go cold first. Cold-today colours the tag."""
+        view = next((a for a in self.snap.agents if a.id == agent_id), None)
+        kind = view.kind if view is not None else "villager"
+        dependent = kind == "dependent"
+        cold = agent_id in self.cold_today
+        # THE read through the wall: this agent's held belief about wood.
+        value, confidence = self.core.belief(agent_id, Resource.WOOD)
+
+        if confidence < 0.05 or value < 0.05:
+            line = ("Winter? A long way off yet. The woodshed can wait."
+                    if not dependent else
+                    "Wood's dear, but there's time. Someone will have it to sell.")
+            tag = "system"
+        elif confidence < 0.35:
+            line = "There's a rumour the winter'll come hard. Talk, most likely."
+            tag = "hint"
+        elif confidence < 0.60:
+            line = ("Folk say the cold comes early. I've begun laying wood by, "
+                    "just in case.")
+            tag = "word"
+        elif value < 0.55:
+            line = "The winter's coming and it'll bite. I'm cutting all the wood I can."
+            tag = "word"
+        else:
+            line = ("A cruel winter's nearly on us -- I cut wood every hour I have "
+                    "and it's still not enough.")
+            tag = "word"
+
+        if dependent and confidence >= 0.35:
+            line += " And I can't fell my own -- I must buy, and pray there's wood to sell."
+        if cold:
+            line = "I'm cold. " + line
+            tag = "dependent_cold" if dependent else "cold"
+        return line, tag
+
+    def worried_voices(self, n: int = 2) -> list[tuple[str, str, str]]:
+        """The n most-worried non-player, non-market voices, as
+        (agent_id, spoken_text, tag), sorted by belief pressure (value x
+        confidence). What the village would say if you stopped to listen."""
+        speakers = []
+        for a in self.snap.agents:
+            if a.is_player or a.kind == "market_maker":
+                continue
+            value, confidence = self.core.belief(a.id, Resource.WOOD)
+            line, tag = self.villager_line(a.id)
+            speakers.append((value * confidence, a.id, line, tag))
+        speakers.sort(key=lambda t: -t[0])
+        return [(aid, line, tag) for _, aid, line, tag in speakers[:n]]
+
     @property
     def day(self) -> int:
         return self.core.day

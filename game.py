@@ -214,10 +214,22 @@ class Game:
                        self.f_xs, BELIEF, v.right - 16, v.y + 12, right=True)
         cx, cy = v.centerx, v.centery + 6; Rr = min(v.w, v.h) * 0.37
         others = [a for a in self.s.snap.agents if a.kind != "market_maker" and not a.is_player]
+        spots = []                       # (agent, x, y, rad) for hover hit-testing
         for i, a in enumerate(others):
             ang = (i / max(len(others), 1)) * math.tau - math.pi / 2
-            self._draw_agent(a, cx + math.cos(ang) * Rr, cy + math.sin(ang) * Rr)
-        self._draw_agent(self.me(), cx, cy)
+            spots.append(self._draw_agent(a, cx + math.cos(ang) * Rr, cy + math.sin(ang) * Rr))
+        spots.append(self._draw_agent(self.me(), cx, cy))
+        # hover a villager to hear their mind: the bubble text is that agent's
+        # real belief, rendered by the session through the SimCore contract.
+        if not self.intro and self.s.phase == "playing":
+            mx, my = pygame.mouse.get_pos()
+            for a, ax, ay, rad in spots:
+                if a.is_player:
+                    continue
+                if (mx - ax) ** 2 + (my - ay) ** 2 <= (rad + 6) ** 2:
+                    line, tag = self.s.villager_line(a.id)
+                    self._draw_speech(ax, ay - rad - 6, line, TAG_COLORS.get(tag, INK), v)
+                    break
 
     def _draw_agent(self, a, x, y):
         cold = a.id in self.s.cold_today
@@ -232,6 +244,34 @@ class Game:
         if a.is_player:
             self._text("YOU", self.mono_sm, BG, int(x), int(y) - 8, center=True)
             self._text(f"{a.wood:.0f}w {a.food:.0f}f", self.mono_sm, INK, int(x), int(y) + 30, center=True)
+        return a, int(x), int(y), rad
+
+    def _wrap(self, text, font, maxw):
+        words, lines, cur = text.split(), [], ""
+        for wd in words:
+            trial = (cur + " " + wd).strip()
+            if font.size(trial)[0] <= maxw or not cur:
+                cur = trial
+            else:
+                lines.append(cur); cur = wd
+        if cur:
+            lines.append(cur)
+        return lines
+
+    def _draw_speech(self, ax, ay, text, color, bounds):
+        """A small speech bubble above an agent, clamped inside the village panel."""
+        font = self.f_xs; maxw = min(230, bounds.w - 24)
+        lines = self._wrap(text, font, maxw)
+        lh = font.get_height() + 2
+        w = max(font.size(ln)[0] for ln in lines) + 16
+        h = lh * len(lines) + 12
+        x = int(max(bounds.x + 6, min(ax - w // 2, bounds.right - w - 6)))
+        y = int(max(bounds.y + 6, ay - h - 6))
+        box = pygame.Rect(x, y, w, h)
+        pygame.draw.rect(self.screen, SURF2, box, border_radius=8)
+        pygame.draw.rect(self.screen, color, box, width=1, border_radius=8)
+        for i, ln in enumerate(lines):
+            self._text(ln, font, INK, x + 8, y + 6 + i * lh)
 
     def _draw_side(self):
         me = self.me(); acc = self.lay["acc"]; self._panel(acc)

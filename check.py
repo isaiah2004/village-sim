@@ -31,6 +31,7 @@ STEPS = [
     ("facade parity",        [sys.executable, "test_simcore.py"]),
     ("capital goods",        [sys.executable, "test_capital.py"]),
     ("dependents",           [sys.executable, "test_dependents.py"]),
+    ("npc dialogue",         [sys.executable, "test_dialogue.py"]),
 ]
 
 

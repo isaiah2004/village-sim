@@ -1,230 +1,87 @@
-# Village Economic Simulation — AIC as Observer
+# Village Sim — a contribution-indexed world simulator
 
-A closed, fully-observable village economy used to develop the economic core
-for a UE5 fantasy-life simulation. The economy is a substrate that runs **with
-or without the player**; the AI Accountant (AIC) observes it, prices
-opportunity, and rewards realized contribution — **but does not stabilize the
-village on its own**. Whether the village survives winter depends on whether
-the player chooses to act.
+A persistent fantasy-world economy where a player (isekai framing: a modern mind
+dropped into a medieval village) reshapes a *living* civilization through real
+systemic impact, not scripted quests. An **AI Accountant** watches the whole
+economy and rewards **realized effect** — keeping someone warm through winter —
+rather than grinding. Knowledge is not free: beliefs **propagate** through a
+social graph with delay and distortion, and only the player can read the
+Accountant's fair-value signal (the "isekai information edge").
 
-This is the headless Python prototype. The validated model will later be
-ported to UE5 C++; UE5 will be the visualization + human-player layer.
+This repository is the **engine-agnostic simulation core** plus a small 2D
+fun-test. The base game will later be built in Unreal Engine 5; this core is
+designed to drop underneath it unchanged.
 
-## Design philosophy (post-redesign)
+> **Continuing this project?** Read **[AGENTS.md](AGENTS.md)** first — it has the
+> working conventions (a foundation gate you must keep green), the phased plan,
+> the locked decisions, and exactly what to build next.
 
-The previous iteration had the AIC effectively solving the crisis by nudging
-villagers to gather more. That made the AIC a central planner — not what we
-want. The current design splits two roles:
-
-1. **The Simulator** (descriptive). Villagers act on local information only:
-   own reserves, market prices, a `perceived_scarcity` belief that rises with
-   felt + witnessed shortage. They never see the AIC. Crisis is real and has
-   consequences if no one helps.
-2. **The AIC** (analytical). Measures everything, publishes a *bounty* on a
-   channel **only the human player can read**, and pays realized-effect
-   bounty when a contributor's resource actually meets someone else's need.
-   It is the "isekai information edge" in mechanical form — privileged
-   knowledge a normal villager doesn't have.
-
-The bounty is **information, not subsidy**. In practice (see results below)
-the player's profit comes from real market trade; the bounty served only to
-*point* the player at where their effort would be most valuable.
-
-## Quick start
+## Quickstart
 
 ```bash
-python ui.py              # interactive: play one human in the village
-python main.py            # headless: run all scenarios, print + plot
-python main.py --no-plot  # skip PNG generation
+pip install pygame
+python game.py          # the 2D click-sim ("Say the Word")
+python view_text.py     # the SAME game rendered in the terminal (a 2nd body)
+python check.py         # the foundation gate — runs every test; must say "FOUNDATION HOLDS"
 ```
 
-### Interactive UI (`ui.py`)
+## The three ideas
 
-Tkinter window (stdlib only, no install). The console is designed around
-**cause-and-effect visibility**: every panel either shows a primitive of the
-sim or names how a derived number was computed. Top: status cards
-(Money / Stamina / Wood / Food / Wood Fair-Value / Flag). Below: AIC panel
-(its reasoning) and Market Book (yesterday's top bids + asks per resource).
-Below: village snapshot (totals, tight-on-reserves count, fear, broke
-villagers). Below: action queue, order entry, advance/reset. Below: timeline
-chart + last-day event log explaining what happened and *why*.
+- **Contribution Index / AI Accountant.** The Accountant is an *observer*, not a
+  planner. It prices opportunity and pays out only when a resource does *realized
+  stabilising work* (is consumed to meet a real need), crediting the original
+  producer backward through a resource-lineage DAG. Priced at **fair value**, so
+  solving a crisis is rewarded — not zeroed out. It also polices exploitation
+  (hoarding a cornered stock during scarcity draws a holding fee).
+- **Knowledge propagation.** A scarcity claim injected into one villager spreads
+  across a social graph with delay, per-hop fidelity loss, and echo caps (100
+  people repeating one rumour ≠ 100 witnesses). A *false* claim can still move
+  markets. Deterministic, rule-based, runs every tick for every agent — no LLM in
+  the loop.
+- **Isekai information edge.** Villagers act only on what they can observe (their
+  reserves, market prices, felt/heard scarcity). Only the player sees the
+  Accountant's fair-value channel. The crisis is real: if the player does nothing,
+  the village suffers, and the Accountant merely measures it.
 
-**The AIC signal is the FAIR VALUE, not an explicit bounty.** The AIC
-publishes its estimate of what each resource *should* cost given the forecast
-(`fair = intrinsic × (1 + 2 × scarcity)`); the player sees this side-by-side
-with the actual market price and infers — "market is well below fair → wood
-is undervalued → gather/buy". When wood market = $2 but fair value = $11
-because winter is coming, the gap *is* the opportunity. Villagers do not see
-fair value — they only see the market price and their own fear. That asymmetry
-is the player's information edge.
+## Architecture — "one brain, many bodies"
 
-Realized-contribution payments still flow underneath (when your wood actually
-meets someone's need, the AIC credits you) — but the rate isn't broadcast.
-You see it as a "stabilisation payment" entry in the log when it lands.
+```
+SimCore (the simulation)  ←  GameSession (the game's rules)  ←  a View (the skin)
+   engine-agnostic             engine-agnostic, no rendering      pygame / terminal / …
+```
 
-**Reset Simulation** (top-right) throws out the current run and starts over
-from day 0 — useful for testing strategies against the same seed.
+A new presentation — a top-down pixel game with walking characters, or the eventual
+UE5 client — is **just another View** over the same `GameSession`, changing nothing
+in the rules or the sim. `view_text.py` (a terminal body sharing nothing with
+`game.py`) is the living proof of this.
 
-## Scenarios + results
+## File map
 
-| Scenario | Winter unmet (village) | Shortage days | Player money | What it shows |
-|---|---|---|---|---|
-| `ACCOUNTANT_OFF` | 106 | 237 | 150 | Baseline — no AIC, idle player. |
-| **`NO_PLAYER`** | **106** | **237** | 150 | AIC is on; village outcome **identical** to ACCT_OFF — proves the AIC doesn't modify villager behaviour. |
-| `PLAYER_IGNORES` | 107 | 37 | 396 | Player exists, lives like a villager. Village outcome same — presence alone doesn't help. |
-| **`PLAYER_RESPONDS`** | **14** | **11** | **1515** | Player chases AIC bounties. The **only** run where the village is rescued; profit is from market trade, not the bounty itself. |
-| `PLAYER_HOARDS` | 50 | 33 | **0** | Player corners wood through winter. Village suffers more than baseline; surveillance levies fees and bankrupts the player. |
-
-Key read: the AIC is doing what an economist (or a labor market signalling
-board) would do — it tells the truth about marginal value. Whether anyone
-acts on that truth is the player's call.
-
-## Belief-driven demand (the seam for knowledge gating)
-
-Villagers carry a `perceived_scarcity` belief per resource that rises with
-their own unmet need + (weakly) witnessed neighbours' unmet need, and decays
-otherwise. Higher fear:
-
-* inflates their reservation price (panic-buying),
-* inflates their target reserve (stockpile-for-self).
-
-This is the **single seam** where the knowledge-gating system will plug in:
-today the "witness" signal is a village-wide aggregate; later it becomes
-gossip propagation with delay + distortion per the knowledge architecture
-(rumours travel slow, lose fidelity, gate by social tier). At that point fear
-becomes a *belief* held against possibly-stale information — and the player's
-information edge becomes exploitable in obvious ways (buy grain before the
-village hears war is coming).
-
-## Architecture
-
-| Module | Responsibility |
+| File | Role |
 |---|---|
-| `config.py`     | All tunables (seasons, yields, belief params, AIC settings). |
-| `lineage.py`    | Resource provenance DAG + backward credit propagation. |
-| `market.py`     | Per-resource call auction. |
-| `agents.py`     | Villagers (belief-driven, AIC-blind) + Player (strategy-driven: idle / ignore / responsive / hoarder). |
-| `accountant.py` | Observer: publishes bounty, pays on realized effect, surveils hoarding. |
-| `world.py`      | Orchestrates production → market → consumption → belief update → surveillance. |
-| `metrics.py`    | Records village welfare, market signals, AIC ledger, player. |
-| `main.py`       | Runs the five scenarios and prints the head-to-head. |
+| `contract.py` | **Frozen v1.1** engine-agnostic interface: Intents / Events / Snapshot. The "wall" — every action passes through it. |
+| `simcore.py` | `SimCore` facade over the reference world; the only thing a body touches. Plus `serialize`/`load`. |
+| `world.py` | The simulation clock/orchestrator (production → market → consumption → belief → surveillance). |
+| `agents.py` | Agents (Villager, Dependent, MarketMaker, Merchant, Player) + player strategies + spawn specs. |
+| `accountant.py` | The AI Accountant: bounty, fair value, realized-effect payout, hoard surveillance. |
+| `lineage.py` | Resource-lineage DAG + backward credit propagation. |
+| `market.py` | Per-resource call auction (sealed-bid double auction). |
+| `knowledge.py` | Social graph + belief propagation (the echo-cap keystone). |
+| `metrics.py` | Per-day series + welfare summary. |
+| `config.py` | All tunables; `Resource`/`Season` enums. |
+| `session.py` | `GameSession` — engine-agnostic game rules (turn flow, action economy, win/lose, impact ledger, counterfactual, semantic news feed). **No rendering.** |
+| `game.py` | pygame **View** ("Say the Word"). Window, palette, layout, input→intent. |
+| `view_text.py` | Terminal **View** — a second body proving the skin is swappable. |
+| `persistence.py` | Full-fidelity JSON save/load for `SimCore`. |
+| `check.py` | The foundation gate: regression + conformance + persistence + unit tests. |
+| `regression.py` + `golden.json` | Golden-master safety net (9 scenarios, 126 metrics). |
+| `test_*.py` | Behavioural + contract + persistence tests. |
+| `main.py`, `demo_knowledge.py` | Headless scenario runners the golden master mirrors. |
+| `*.html`, `plot_*.png`, `sim_data.json` | Published demo pages and plots (project artifacts). |
 
-## What survived from the previous iteration
+## Status
 
-* The **resource-lineage DAG** + backward credit propagation. Still core: it
-  makes hoarded wood worthless (it never does stabilising work), and it pays
-  upstream contributors fractionally when their work enabled the realized effect.
-* The **call-auction market** with price discovery.
-* Realized-effect payout (refined: producer ≠ consumer required).
-* Hoarding surveillance (rewritten: combined honest-offer + sales signal).
-
-## What changed
-
-* **AIC ↛ Villagers.** Villagers no longer see the bounty. The bounty channel
-  is player-only.
-* **Belief / fear** is a first-class villager state (the future knowledge-gating hook).
-* **Player archetypes** (`idle`, `ignore`, `responsive`, `hoarder`) instead of a
-  single "responsive" + "hoarder" pair, to demonstrate the player-agency axis cleanly.
-* **Village welfare** is now the primary metric, not aggregate unmet (which
-  conflated villagers and the player).
-* **Self-consumption excluded** from bounty payout — contribution must serve
-  someone else.
-
-## Extending: adding new archetypes
-
-The system is structured so adding new entity types and player strategies is
-**purely additive** — no core module (market / lineage / accountant / world)
-needs to change.
-
-### Add a new NPC archetype (Merchant, Noble, Adventurer, …)
-
-1. In `agents.py`, subclass `Agent` (or `Villager`):
-   ```python
-   class Noble(Agent):
-       def __init__(self, agent_id, cfg, rng, **kwargs):
-           super().__init__(agent_id, cfg, rng)
-           # ... role-specific setup
-       def decide_actions(self, ctx): ...
-       def make_orders(self, ctx): ...
-   ```
-2. In your scenario, register them via `SpawnSpec`:
-   ```python
-   population = [
-       SpawnSpec(Villager, 12, id_prefix="v"),
-       SpawnSpec(Noble, 1, id_prefix="n", kwargs={"tax_rate": 0.1}),
-   ]
-   World(cfg, player_strategy="responsive", population=population)
-   ```
-
-That's it. The market/lineage/AIC don't need to know Noble exists.
-
-### Add a new player strategy
-
-1. In `agents.py`, subclass `Strategy`:
-   ```python
-   class RunCaravanStrategy(Strategy):
-       name = "caravan"
-       daily_stamina_mult = 2.0
-       def decide_actions(self, ag, ctx): ...
-       def make_orders(self, ag, ctx): ...
-   ```
-2. Add to the `STRATEGIES` registry one line below.
-
-Now `Player(cfg, ..., strategy="caravan")` works anywhere.
-
-### `WITH_MERCHANTS` scenario in `main.py`
-
-Demonstrates the modularity end-to-end: `Merchant` is a new `Agent` subclass,
-3 of them are added via `SpawnSpec`, no other code was touched, and they
-participate in markets / lineage / AIC observation transparently. (They also
-happen to hurt the village by absorbing supply for arbitrage — useful
-emergent dynamic, not a tuned scenario.)
-
-### What's NOT yet modular (planned with knowledge-gating)
-
-* Multi-region markets / belief regions — currently one village, one market.
-  Coming as part of Stage 2 (knowledge layer), since regions are central to
-  the gating architecture.
-* Capital goods that *generate income* (mills, trade routes, owned land) —
-  lineage `Lot`s today are consumable; we'll need persistent income-generating
-  assets when nobles / guilds / production chains arrive.
-* Non-economic roles (taxation, command, ritual) — these don't fit the
-  produce-trade-consume loop and will need their own mechanics.
-
-## Stage 2/3: Knowledge Propagation (`knowledge.py` + `demo_knowledge.py`)
-
-The belief seam described above is now realized. `knowledge.py` adds a social
-graph, structured `Claim`/`Belief` objects, and a `PropagationEngine`: a scarcity
-claim injected into one agent **travels** across the village with delay, per-hop
-fidelity loss, and an **echo cap** (repeats of the *same* source barely move
-confidence; only *independent* roots corroborate into conviction). It replaces
-the village-wide `village_unmet` oracle in `_belief_update_phase` and feeds the
-same `perceived_scarcity` that drives panic-buying. All of it is gated behind
-`cfg.propagation_enabled` (default **off**), so the validated scenarios above
-remain byte-identical.
-
-```bash
-python demo_knowledge.py            # headless report + hero plot
-python demo_knowledge.py --no-plot
-```
-
-Findings (player held idle, so any welfare change is caused purely by belief):
-
-* **Information as contribution.** A *true* winter-wood warning, spread through
-  the otherwise-myopic village, cuts winter shortage ~84% (28.8 → 4.6 unmet).
-  Information overcomes the 4-day myopia the whole economy is built on — the
-  isekai information edge, given away instead of exploited.
-* **Popularity is not truth.** A *false* food rumour from one source reaches ~67%
-  of the village in awareness but its confidence stays capped ("plausible"),
-  while a real winter shortage, independently witnessed by 9 villagers,
-  corroborates to conviction (belief 0.75). Echo ≠ corroboration.
-* **Honest null result.** A scarcity *lie* does **not** manufacture a famine here
-  because supply is elastic (villagers just gather more; panic becomes protective
-  over-provisioning). Harmful disinformation-for-profit needs supply inelasticity
-  or wealth inequality to bite — the clean next extension.
-
-## Porting to UE5 (later)
-
-The core (`lineage / market / agents / accountant / world`) is pure logic.
-It ports to UE5 C++ as a subsystem; UE5 supplies the world rendering and the
-human player's actions. The headless Python remains the balancing harness.
+**Phase 1 (lock the model + contract) is finalized.** The contract is frozen,
+save/load is implemented, and the golden master is locked. **Phase 2 (prove it's
+fun) is in progress** — the 2D fun-test exists and the contribution loop is made
+legible. See **[AGENTS.md](AGENTS.md)** for the full roadmap and next steps.

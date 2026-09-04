@@ -32,6 +32,7 @@ STEPS = [
     ("capital goods",        [sys.executable, "test_capital.py"]),
     ("dependents",           [sys.executable, "test_dependents.py"]),
     ("npc dialogue",         [sys.executable, "test_dialogue.py"]),
+    ("game save/load",       [sys.executable, "test_save_load_game.py"]),
 ]
 
 

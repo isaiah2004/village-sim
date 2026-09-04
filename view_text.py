@@ -21,7 +21,7 @@ from session import GameSession
 
 CMDS = """commands:  q gather wood   w gather food   e woodlot   d warn winter
            s sell wood   b buy food   f fast-forward   t listen to the village
-           [enter] end day   x quit"""
+           save / load   [enter] end day   x quit"""
 
 
 def dashboard(s: GameSession) -> str:
@@ -73,6 +73,16 @@ def apply(s: GameSession, cmd: str) -> bool:
     cmd = cmd.strip().lower()
     if cmd in ("x", "quit"):
         return False
+    if cmd == "save":
+        path = s.save_to_file()
+        print(f"  [saved] game written to {path} (day {s.day}).")
+        return True
+    if cmd == "load":
+        if s.load_from_file():
+            print(f"  [loaded] resumed on day {s.day}.")
+        else:
+            print("  [load] no save file found.")
+        return True
     if cmd == "q": s.gather(Resource.WOOD)
     elif cmd == "w": s.gather(Resource.FOOD)
     elif cmd == "e": s.build_woodlot()

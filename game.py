@@ -69,6 +69,7 @@ class Game:
         self.mono_sm = pygame.font.SysFont("consolas,monospace", 12)
         self.s = GameSession()          # the rules; this View only reads/drives it
         self.intro = True               # a View-only splash before the first turn
+        self.toast = ("", 0)            # (text, frames-left) transient status line
         self._relayout()
 
     # ---------------- convenience passthroughs to the session ----------------
@@ -122,7 +123,20 @@ class Game:
         elif key == pygame.K_e:    s.build_woodlot()
         elif key == pygame.K_d:    s.warn()
         elif key == pygame.K_f:    s.fast_forward()
+        elif key == pygame.K_s:    self._save()
+        elif key == pygame.K_l:    self._load()
         elif key == pygame.K_RETURN: s.end_day()
+
+    def _save(self):
+        path = self.s.save_to_file()
+        self._toast(f"Saved  ·  day {self.s.day}")
+
+    def _load(self):
+        self._toast(f"Loaded  ·  day {self.s.day}" if self.s.load_from_file()
+                    else "No save found")
+
+    def _toast(self, text):
+        self.toast = (text, 150)        # ~2.5s at 60fps
 
     # ---------------- loop ----------------
     def run(self):
@@ -156,7 +170,20 @@ class Game:
         self._draw_actionbar(); self._draw_log()
         if self.intro: self._overlay_intro()
         elif self.s.phase == "ended": self._overlay_over()
+        self._draw_toast()
         pygame.display.flip()
+
+    def _draw_toast(self):
+        text, frames = self.toast
+        if frames <= 0 or not text:
+            return
+        self.toast = (text, frames - 1)
+        pad = 10
+        w = self.f_sm.size(text)[0] + pad * 2
+        box = pygame.Rect((self.W - w) // 2, 74, w, 30)
+        pygame.draw.rect(self.screen, SURF2, box, border_radius=8)
+        pygame.draw.rect(self.screen, GREEN, box, width=1, border_radius=8)
+        self._text(text, self.f_sm, INK, box.centerx, box.y + 7, center=True)
 
     def _text(self, s, font, color, x, y, center=False, right=False):
         surf = font.render(s, True, color); r = surf.get_rect()
@@ -327,6 +354,8 @@ class Game:
         q = ", ".join(self.s.queued) if self.s.queued else "nothing yet"
         self._text("PLANNED: " + q, self.f_xs, MUTE if not self.s.queued else INK,
                    self.lay["bar"].x + 2, self.lay["bar"].y + 4)
+        self._text("S save · L load", self.f_xs, MUTE,
+                   self.lay["bar"].right - 2, self.lay["bar"].y + 4, right=True)
 
     def _clip(self, s, font, maxw):
         if font.size(s)[0] <= maxw:
@@ -363,8 +392,8 @@ class Game:
             ("or spend a day carrying word of winter so the village prepares. Your", INK),
             ("score is the worth of the need you meet -- most for those who can't cut wood.", INK),
             ("", INK),
-            ("Q wood   W food   E woodlot   D warn   F fast-forward   Enter end day", STEEL),
-            ("Sell / Buy in the Accountant panel.", STEEL),
+            ("Q wood  W food  E woodlot  D warn  F fast-forward  Enter end day", STEEL),
+            ("Sell / Buy in the Accountant panel.  S save · L load · hover a villager to hear them.", STEEL),
         ]):
             self._text(ln, self.f, c, cx, 124 + i * 26, center=True)
         self._text("click or press any key to begin", self.mono, MUTE, cx, 124 + 13 * 26, center=True)

@@ -69,7 +69,6 @@ class GameSession:
     def new_game(self) -> None:
         self.cfg = self._mk_cfg()
         self.core = SimCoreFactory(self.cfg, self._mk_pop)
-        self.snap = self.core.begin_turn()
         self.stamina_used = 0
         self.queued: list[str] = []
         self.news: list[tuple[str, str]] = []      # (text, semantic tag)
@@ -89,7 +88,19 @@ class GameSession:
         self.phase = "playing"                      # 'playing' | 'ended'
         self.over_reason = ""
         self.result: dict | None = None
+        self._boundary: dict = {}                   # last clean-boundary save
         self._log("A new year begins. Winter is far off -- but only you can see it coming.", "system")
+        self._enter_day()
+
+    def _enter_day(self) -> None:
+        """Stash a clean-boundary save, THEN begin the day for the UI. The save
+        must be captured here -- between commit_turn and begin_turn -- because
+        begin_day applies per-day effects (stamina refresh, the dependent
+        stipend) that would double-apply if a mid-turn save were reloaded and
+        begin_day ran again. Capturing pre-begin makes save/load round-trip
+        byte-identical (see test_save_load_game.py)."""
+        self._boundary = self._make_boundary()
+        self.snap = self.core.begin_turn()
 
     # --------------------------------------------------------------------- reads
     def me(self):
@@ -180,6 +191,93 @@ class GameSession:
     def _log(self, text: str, tag: str = "system") -> None:
         self.news.append((text, tag))
         self.news = self.news[-8:]
+
+    # --------------------------------------------------------------- persistence
+    # A save is the whole GAME, not just the sim: the sim state goes through the
+    # contract (SimCore.serialize/load -- the wall holds), and the session layer
+    # adds its own game state (the news feed, the impact ledger, warning history,
+    # win/lose). Both are captured at a clean day boundary by _enter_day, so a
+    # reload lands exactly where the save was taken and continues byte-identically.
+    SAVE_FORMAT = 1
+    DEFAULT_SAVE_PATH = "savegame.save.json"
+
+    def _session_state(self) -> dict:
+        """JSON-safe snapshot of the session's own (non-sim) game state."""
+        return {
+            "news": [list(item) for item in self.news],
+            "cold_today": sorted(self.cold_today),
+            "warned_today": self.warned_today,
+            "warn_ever": self.warn_ever,
+            "starving": self.starving,
+            "warn_days": list(self.warn_days),
+            "impact": {k: dict(v) for k, v in self.impact.items()},
+            "wood_awareness": self.wood_awareness,
+            "wood_roots": self.wood_roots,
+            "aware_bucket": self._aware_bucket,
+            "hoard_hinted": self.hoard_hinted,
+            "phase": self.phase,
+            "over_reason": self.over_reason,
+            "result": self.result,
+        }
+
+    def _restore_session(self, s: dict) -> None:
+        self.news = [tuple(item) for item in s["news"]]
+        self.cold_today = set(s["cold_today"])
+        self.warned_today = s.get("warned_today", False)
+        self.warn_ever = s["warn_ever"]
+        self.starving = s["starving"]
+        self.warn_days = list(s["warn_days"])
+        self.impact = {k: dict(v) for k, v in s["impact"].items()}
+        self.wood_awareness = s["wood_awareness"]
+        self.wood_roots = s["wood_roots"]
+        self._aware_bucket = s["aware_bucket"]
+        self.hoard_hinted = s["hoard_hinted"]
+        self.phase = s["phase"]
+        self.over_reason = s["over_reason"]
+        self.result = s["result"]
+
+    def _make_boundary(self) -> dict:
+        """A save taken at THIS day boundary: sim (through the wall) + session."""
+        return {"sim": self.core.serialize(), "session": self._session_state()}
+
+    def save(self) -> dict:
+        """A JSON-safe save of the whole game at the current day boundary."""
+        return {"game_save_format": self.SAVE_FORMAT, **self._boundary}
+
+    def load(self, blob: dict) -> None:
+        """Restore a game produced by save(). Rebuilds the sim via the contract
+        (SimCore.from_save) and re-enters the saved day exactly as _enter_day
+        does, so play continues identically from here."""
+        fmt = blob.get("game_save_format")
+        if fmt != self.SAVE_FORMAT:
+            raise ValueError(f"incompatible game save format {fmt!r} "
+                             f"(this build reads {self.SAVE_FORMAT})")
+        from simcore import SimCore
+        self.core = SimCore.from_save(blob["sim"])     # contract-level restore
+        self.cfg = self.core.cfg
+        self._restore_session(blob["session"])
+        self.stamina_used = 0                          # transients reset to day-start
+        self.queued = []
+        self.pending_sell = {}
+        self._boundary = {"sim": blob["sim"], "session": blob["session"]}
+        self.snap = self.core.begin_turn()
+
+    def save_to_file(self, path: str | None = None) -> str:
+        import json
+        path = path or self.DEFAULT_SAVE_PATH
+        with open(path, "w") as f:
+            json.dump(self.save(), f)
+        return path
+
+    def load_from_file(self, path: str | None = None) -> bool:
+        """Load if the save file exists; return False (touching nothing) if not."""
+        import json, os
+        path = path or self.DEFAULT_SAVE_PATH
+        if not os.path.exists(path):
+            return False
+        with open(path) as f:
+            self.load(json.load(f))
+        return True
 
     # ------------------------------------------------------------------- guards
     def can_act(self) -> bool:
@@ -274,7 +372,7 @@ class GameSession:
         elif self.core.done:
             self._end("")
         else:
-            self.snap = self.core.begin_turn()
+            self._enter_day()
             me = self.me()
             if me.food < 2.0:
                 self._log("Food is running low -- gather or buy food.", "food_low")

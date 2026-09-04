@@ -144,6 +144,23 @@ class Config:
     dependent_stipend: float = 6.0    # money/day income for a dependent household
 
     capital_goods_enabled: bool = False
+
+    # ----- second crisis: summer food blight (Track A #2) -----
+    # A blight cuts food gather yield during its season, creating a SECOND scarce
+    # good and a competing crisis -- food in summer alongside wood in winter -- to
+    # test whether the loop stays interesting under two pressures rather than one
+    # wood/winter axis. OFF by default so the validated scenarios and golden stay
+    # byte-identical; a body or demo opts in. No special-casing is needed
+    # elsewhere: food is already first-class, so food fear, the FOOD market, and
+    # the AIC's fair-value channel all respond to the shortfall on their own.
+    food_blight_enabled: bool = False
+    food_blight_season: Season = Season.SUMMER  # the season the blight bites
+    # 0.12 = food gather at 12% of normal during the blight. Chosen so the crisis
+    # is real (idle villagers suffer ~40 summer food unmet, comparable to winter
+    # wood) yet fully rescuable by a player who stocks food and sells into it --
+    # mild cuts (>=0.2) just trigger elastic over-provisioning and no crisis.
+    food_blight_yield_mult: float = 0.12        # food gather yield during the blight
+
     woodlot_wood_cost: float = 8.0    # base wood cost; upgrading TO level L costs cost*L
     woodlot_wood_output: float = 1.5  # wood yielded per active day, PER LEVEL
     woodlot_upkeep_food: float = 0.5  # food its workers eat per day, PER LEVEL; no food -> it idles

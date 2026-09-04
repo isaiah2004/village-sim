@@ -272,6 +272,13 @@ class World:
 
     def _do_gather(self, ag, r: Resource, ctx: Ctx) -> float:
         base = self.cfg.base_yield[r] * self.cfg.season_yield_mult[ctx.season] * ag.skill[r]
+        # A summer food blight (flag-gated OFF by default) cuts food gather yield
+        # during its season -- the second-crisis lever. Wood is untouched; only
+        # food produced in the blight season shrinks, so a food shortfall builds
+        # exactly when winter-wood prep also wants attention.
+        if (r == Resource.FOOD and self.cfg.food_blight_enabled
+                and ctx.season == self.cfg.food_blight_season):
+            base *= self.cfg.food_blight_yield_mult
         parents = []
         if ag.has_tool:
             total = base * (1.0 + self.cfg.tool_yield_bonus)

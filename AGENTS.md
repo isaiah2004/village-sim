@@ -142,12 +142,24 @@ playtest "much later"; until then, prefer low-risk, high-legibility work):
    validator).
 2. **A second scarce good / second crisis** (e.g., a summer food blight) to test
    whether the loop stays interesting under competing pressures rather than one
-   wood/winter axis.
+   wood/winter axis. *Mechanic implemented — `food_blight_enabled` (default OFF),
+   cuts food gather yield to 12% in summer; `demo_blight.py` + `test_blight.py`.*
+   A real summer crisis appears (idle village ~43 food unmet) and a food-stocking
+   player rescues it. **Owner calls whether to turn it on in the game and playtest.**
+   *Follow-up (index change, needs owner sign-off):* the contribution index credits
+   WOOD consumption only (`world._consumption_phase`), so feeding the hungry earns
+   rescued welfare but no *score*. Scoring the food axis means extending
+   `reward_consumption` to food — flag-gate it and re-capture golden intentionally.
 3. **NPC dialogue stub** — walk-up-and-talk that renders a villager's *actual*
    belief. `SimCore.belief(agent_id, resource)` already returns `(value,
    confidence)`. This is the first concrete step toward a pixel-art / UE5 body.
+   *Done — `session.villager_line` / `worried_voices` (belief read through the
+   contract); pygame hover bubble + terminal `t`/voices; `test_dialogue.py`.*
 4. **Surface save/load in a body** (e.g. S/L keys). Persistence exists
    (`persistence.py`, `SimCore.serialize/load`) but no View exposes it yet.
+   *Done — whole-game save/load (`GameSession.save/load`, sim through the wall +
+   session layer), captured at a clean day boundary; `game.py` S/L keys + toast,
+   `view_text.py` save/load; `test_save_load_game.py`.*
 
 ---
 

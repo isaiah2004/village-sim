@@ -25,12 +25,13 @@ import random
 
 from accountant import Accountant
 from agents import (Asset, BuildWoodlotAction, Ctx, CraftToolAction, GatherAction,
-                    MarketMaker, Player, SpawnSpec, Villager)
+                    InterventionAction, MarketMaker, Player, SpawnSpec, Villager)
 from config import Config, Resource, Season
 from knowledge import Claim, PropagationEngine, SocialGraph
 from lineage import LineageGraph
 from market import CallMarket
 from metrics import Metrics
+import interventions
 import problems
 
 _ZERO_UNMET = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
@@ -61,6 +62,10 @@ class World:
         # Layer 1: the world's problem board (typed, located, severity-tracked).
         # Observational -- refreshed from world-state each day, mutates nothing.
         self.problems = problems.build_board(cfg)
+        # Layer 3: the pre-authored intervention library (data). Never applied
+        # unless a body submits a Perform intent AND cfg.interventions_enabled.
+        self.interventions = {iv.key: iv for iv in interventions.build_library(cfg)}
+        self._interventions_today: list = []      # this day's attempts, for events
         self.day = 0
         self.ref_price = {r: cfg.intrinsic_value[r] for r in Resource}
 
@@ -189,6 +194,7 @@ class World:
         # Layer 1: refresh the problem board from the day's world-state (the
         # accountant's scarcity signal is now fresh). Pure read -- no sim effect.
         problems.refresh(self.problems, self)
+        self._interventions_today = []       # reset the day's intervention attempts
 
     def execute_day(self) -> None:
         """Run today's production -> market -> consumption -> belief -> surveillance."""
@@ -219,6 +225,8 @@ class World:
                     self._do_craft_tool(ag, ctx)
                 elif isinstance(action, BuildWoodlotAction):
                     self._do_build_woodlot(ag, ctx)
+                elif isinstance(action, InterventionAction):
+                    self._do_intervention(ag, action.key, ctx)
         # capital goods run AFTER labour: each woodlot yields wood (fed by upkeep food).
         if self.cfg.capital_goods_enabled:
             produced[Resource.WOOD] += self._run_woodlots()
@@ -251,6 +259,17 @@ class World:
             ag.assets.append(Asset(kind="woodlot", lot_id=lot.id, built_tick=ctx.day, level=1))
         else:
             wl.level = cur + 1   # upgrade: yield scales; output stays rooted at its lot
+
+    def _do_intervention(self, ag, key: str, ctx: Ctx) -> None:
+        """Attempt a pre-authored world-change (Layer 3). Preconditions and the
+        authored effect live in interventions.py; the world just dispatches and
+        records the attempt so a body can react. No-op unless enabled + accepted."""
+        iv = self.interventions.get(key)
+        if iv is None:
+            self._interventions_today.append((ag.id, key, False, 0.0, "", "unknown intervention"))
+            return
+        accepted, spent, reason = interventions.perform(self, ag, iv, ctx.day)
+        self._interventions_today.append((ag.id, key, accepted, spent, iv.targets, reason))
 
     def _run_woodlots(self) -> float:
         """

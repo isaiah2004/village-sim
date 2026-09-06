@@ -176,6 +176,13 @@ class Config:
     # not a food special-case.
     reward_food_need: bool = False
 
+    # ----- interventions (Layer 3: how the player changes the world) -----
+    # A pre-authored library of world-changes (interventions.py), each gated by
+    # preconditions (capital, standing, enabling knowledge) and applying an
+    # authored effect to world-state. OFF by default so the validated scenarios
+    # never perform one and stay byte-identical; a body/demo opts in.
+    interventions_enabled: bool = False
+
     # ----- AI Accountant (observer, not planner) -----
     accountant_enabled: bool = True
     # How realized contribution is PRICED when your resource meets someone else's

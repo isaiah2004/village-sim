@@ -126,7 +126,9 @@ SimCore + contract  →  GameSession (session.py)  →  View (game.py, view_text
 > is a **calculator, not the game**; never hardcode a scenario into it. The build
 > order is settled there: **(1) make Layer 2 (the index) universal — DONE below;
 > (2) Layer 1 world-model — first piece DONE below; (3) Layer 3 interventions —
-> not started.** Do not start Layer 3 until asked.
+> first piece DONE below.** All three layers now have a working first piece; the
+> frontier is deepening each (esp. reputation-via-propagation and the LLM merchant
+> at the edge). Confirm scope with the owner before the next big step.
 
 **Layer 2 is now universal — the need registry.** "Need" is DATA (`needs.py`): a
 `Need` = an identity, the resource whose consumption meets it (the lineage
@@ -157,10 +159,33 @@ question 2 ("what is the problem?") made first-class.
 
 **Layer 1 — what remains (frontier):** more problem TYPES as needed; *located*
 problems beyond the single "village" (regions arrive with the Stage-2 knowledge
-layer); and the bridge letting an intervention **target** a problem and the index
-**price** the severity drop it causes (the ghost-counterfactual already
-generalizes). **Next per DESIGN.md is Layer 3 (interventions — the mill), which
-needs this world-state to act on. Don't start Layer 3 yet.**
+layer); and richer severity readers.
+
+**Layer 3 is now data — the intervention library (first piece).** How the player
+CHANGES the world (`interventions.py`): an `Intervention` is data (key, title, the
+Layer-1 problem it `targets`, `capital_cost`, `min_standing`, enabling `requires`
+flags). A new `Perform(key)` contract intent (**v1.2 → v1.3**, additive, + an
+`InterventionPerformed` event) routes through `world._do_intervention` →
+`interventions.perform`, which checks preconditions and applies one authored,
+deterministic EFFECT to world-state — the ONLY place an intervention touches the
+sim. First rung: `found_mill` — a capital-financed woodlot that lowers the
+`capital_gap:wood` problem and whose wood the index credits to the founder. OFF by
+default (`cfg.interventions_enabled`) → the **140 golden metrics stay byte-identical**
+(no capture). `demo_interventions.py` shows the two-year loop (locked early → prove
+yourself → found & grow the mill → capital gap 1.00→0.00); `test_interventions.py`
+proves library-data, gated-off no-op, precondition gating, the world-change effect +
+index pricing, and determinism. Two seams are deliberate and documented in
+`interventions.py`: **standing** (`interventions.standing`, today = realized
+contribution; DESIGN.md's reputation = deeds propagated through `knowledge.py` plugs
+in here) and **negotiation** (`interventions.evaluate`, today a deterministic
+merchant; an LLM merchant replaces it AT THE EDGE — proposes/judges, sim validates,
+never mutates state).
+
+**Layer 3 — what remains (frontier, the actual game):** more interventions in the
+library (dig a well, open a trade route, haul grain to a famine); the reputation
+model (deeds → `knowledge.py` propagation → standing); the AI-merchant negotiation
+at the edge (LLM proposes terms, sim validates); a real capital/loan mechanic.
+**Confirm scope with the owner before building the next big Layer-3 step.**
 
 **Track A (make the loop fun) — done this track:** contribution made *felt* (the news feed names *who*
 you kept warm and *why* it was worth what it was — `ContributionDetail` event);

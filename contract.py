@@ -35,14 +35,18 @@ from config import Resource, Season
 #   1.2 (2026-09-06) additive: ProblemView + Snapshot.problems -- Layer 1's
 #       world-state problem board (typed, located, severity), read-only. Minor
 #       bump; the field defaults to [] so older bodies are unaffected.
-CONTRACT_VERSION = "1.2"
+#   1.3 (2026-09-06) additive: Perform intent + InterventionPerformed event --
+#       Layer 3's pre-authored world-changes. Minor bump; older bodies never
+#       submit Perform and safely ignore the new event type.
+CONTRACT_VERSION = "1.3"
 
 __all__ = [
     "CONTRACT_VERSION", "Resource", "Season",
-    "Gather", "CraftTool", "BuildWoodlot", "Trade", "Speak", "Intent", "INTENT_TYPES",
+    "Gather", "CraftTool", "BuildWoodlot", "Trade", "Speak", "Perform",
+    "Intent", "INTENT_TYPES",
     "DayAdvanced", "Produced", "TradeCleared", "Settled", "ContributionPaid",
     "ContributionDetail", "Shortage", "HoardFlagged", "HoldingFee", "AssetBuilt",
-    "BeliefState", "Event", "EVENT_TYPES",
+    "BeliefState", "InterventionPerformed", "Event", "EVENT_TYPES",
     "AgentView", "MarketView", "ProblemView", "Snapshot",
 ]
 
@@ -94,11 +98,22 @@ class Speak:
     authority: float = 0.6
 
 
+@dataclass
+class Perform:
+    """Perform a pre-authored world-change from the intervention library (Layer 3),
+    identified by `key` (e.g. "found_mill"). The world checks the intervention's
+    preconditions (capital, standing, enabling knowledge) and, if met, applies its
+    authored effect to world-state -- which the index then prices. A no-op if
+    interventions are disabled or a precondition fails; the reason surfaces as an
+    InterventionPerformed event with accepted=False."""
+    key: str
+
+
 # The closed set of intents a body may submit. This tuple IS the contract's
 # surface for external control -- the conformance test asserts SimCore.submit()
 # accepts every type in it and nothing outside it.
-INTENT_TYPES = (Gather, CraftTool, BuildWoodlot, Trade, Speak)
-Intent = Union[Gather, CraftTool, BuildWoodlot, Trade, Speak]
+INTENT_TYPES = (Gather, CraftTool, BuildWoodlot, Trade, Speak, Perform)
+Intent = Union[Gather, CraftTool, BuildWoodlot, Trade, Speak, Perform]
 
 
 # ======================================================================
@@ -193,15 +208,30 @@ class BeliefState:
     distinct_roots: int       # echo (1) vs corroboration (many)
 
 
+@dataclass
+class InterventionPerformed:
+    """A pre-authored world-change was attempted this step (Layer 3). accepted
+    tells whether preconditions were met and the effect applied; on failure,
+    `reason` says why (so a body can show 'need more capital/standing')."""
+    agent_id: str
+    key: str
+    accepted: bool
+    capital_spent: float      # money paid to perform it (0 if rejected)
+    target: str               # the problem key it addresses, e.g. "capital_gap:wood"
+    reason: str               # "" on success; else why it was rejected
+
+
 # The closed set of events the world emits. The conformance test asserts every
 # event drained from a live run is an instance of one of these.
 EVENT_TYPES = (
     DayAdvanced, Produced, TradeCleared, Settled, ContributionPaid,
     ContributionDetail, Shortage, HoardFlagged, HoldingFee, AssetBuilt, BeliefState,
+    InterventionPerformed,
 )
 Event = Union[
     DayAdvanced, Produced, TradeCleared, Settled, ContributionPaid,
     ContributionDetail, Shortage, HoardFlagged, HoldingFee, AssetBuilt, BeliefState,
+    InterventionPerformed,
 ]
 
 

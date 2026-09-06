@@ -26,7 +26,8 @@ yields the same run.
 """
 from __future__ import annotations
 
-from agents import BuildWoodlotAction, CraftToolAction, GatherAction, Order, Strategy
+from agents import (BuildWoodlotAction, CraftToolAction, GatherAction,
+                    InterventionAction, Order, Strategy)
 from config import Config, Resource
 from world import World
 import contract as C
@@ -122,6 +123,8 @@ class SimCore:
             self._strategy.q_actions.append(CraftToolAction())
         elif isinstance(intent, C.BuildWoodlot):
             self._strategy.q_actions.append(BuildWoodlotAction())
+        elif isinstance(intent, C.Perform):
+            self._strategy.q_actions.append(InterventionAction(intent.key))
         elif isinstance(intent, C.Trade):
             self._strategy.q_orders.append(
                 Order(agent_id, intent.resource, intent.side, intent.qty, intent.price))
@@ -188,6 +191,10 @@ class SimCore:
             for asset in getattr(a, "assets", []):
                 if asset.built_tick == self._day:
                     self._events.append(C.AssetBuilt(a.id, asset.kind))
+        # interventions attempted this day (Layer 3) -- accepted or rejected
+        for (aid, key, accepted, spent, target, reason) in getattr(w, "_interventions_today", ()):
+            self._events.append(C.InterventionPerformed(
+                aid, key, accepted, round(spent, 4), target, reason))
         # knowledge network readout
         if w.prop is not None:
             vids = {a.id for a in w.agents if not a.is_player and not a.is_market_maker}
@@ -276,6 +283,28 @@ class SimCore:
         """The world's live problem board (Layer 1): typed, located, severity-ranked
         problems the player could resolve. Read-only; sorted worst-first."""
         return sorted(self.snapshot().problems, key=lambda p: -p.severity)
+
+    def standing(self, agent_id: str = "PLAYER") -> float:
+        """The agent's reputation/standing that gates interventions (Layer 3):
+        realized contribution to date -- their track record of deeds."""
+        import interventions
+        a = self.world.by_id.get(agent_id)
+        return interventions.standing(a) if a else 0.0
+
+    def interventions(self, agent_id: str = "PLAYER") -> list:
+        """The pre-authored action library as an agent sees it now: each entry is
+        (key, title, targets, capital_cost, min_standing, can_perform, reason) --
+        what a body renders as the player's action menu, greying out the locked
+        ones with the reason they're locked."""
+        import interventions as I
+        w = self.world
+        a = w.by_id.get(agent_id)
+        out = []
+        for iv in w.interventions.values():
+            accepted, reason = (False, "no such agent") if a is None else I.evaluate(w, a, iv)
+            out.append((iv.key, iv.title, iv.targets, iv.capital_cost,
+                        iv.min_standing, accepted, reason))
+        return out
 
     def welfare(self) -> dict:
         return self.world.metrics.summary()

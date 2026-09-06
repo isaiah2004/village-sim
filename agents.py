@@ -37,6 +37,14 @@ class BuildWoodlotAction:
 
 
 @dataclass
+class InterventionAction:
+    """Perform a pre-authored world-change from the intervention library (Layer 3),
+    identified by key. Preconditions and effects live in interventions.py; the
+    world applies it deterministically. Player-driven only."""
+    key: str
+
+
+@dataclass
 class Asset:
     """An owned, persistent capital good (not a consumable holding)."""
     kind: str            # "woodlot"

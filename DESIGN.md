@@ -108,6 +108,11 @@ Systems this one example needs:
 - The **intervention library**: preconditions → effects on world-state.
 - Those effects feed **Layer 1** state, which **Layer 2** prices.
 
+The intervention library is built (`interventions.py`, first rung `found_mill`).
+The **AI-agent negotiation step is scoped** in
+[docs/llm-merchant-negotiation.md](docs/llm-merchant-negotiation.md) — the LLM as a
+soft gate at the edge, the sim as the hard gate, all flag-gated.
+
 ## Sequencing (build order)
 
 1. **NOW — make Layer 2 universal.** Turn "need" into a **data-defined Need/Problem

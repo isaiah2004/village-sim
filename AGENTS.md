@@ -184,8 +184,12 @@ never mutates state).
 **Layer 3 — what remains (frontier, the actual game):** more interventions in the
 library (dig a well, open a trade route, haul grain to a famine); the reputation
 model (deeds → `knowledge.py` propagation → standing); the AI-merchant negotiation
-at the edge (LLM proposes terms, sim validates); a real capital/loan mechanic.
-**Confirm scope with the owner before building the next big Layer-3 step.**
+at the edge (LLM proposes terms, sim validates); a real capital/loan mechanic. The
+**LLM-merchant negotiation step is scoped** in
+[docs/llm-merchant-negotiation.md](docs/llm-merchant-negotiation.md) — read it
+before building: the LLM stays at the edge (soft gate + terms), the sim is the hard
+gate, everything flag-gated so golden stays byte-identical. **Confirm scope with the
+owner before building the next big Layer-3 step.**
 
 **Track A (make the loop fun) — done this track:** contribution made *felt* (the news feed names *who*
 you kept warm and *why* it was worth what it was — `ContributionDetail` event);

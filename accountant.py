@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 
 from config import Config, Resource, Season
 from lineage import LineageGraph
+from needs import Need, build_registry
 
 
 @dataclass
@@ -51,6 +52,10 @@ class AccountantState:
 class Accountant:
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        # The registry of needs the index prices/rewards -- DATA, assembled from
+        # config. All pricing and payout below is driven by this list, with no
+        # per-resource branching, so a new need is a registry row, not new code.
+        self.needs: list[Need] = build_registry(cfg)
         self.state = AccountantState(
             bounty={r: 0.0 for r in Resource},
             fair_price={r: cfg.intrinsic_value[r] for r in Resource},
@@ -88,9 +93,12 @@ class Accountant:
             return
         n = len(agents)
         today_mult = self.cfg.season_yield_mult[self.cfg.season_for_day(day)]
-        for r in (Resource.WOOD, Resource.FOOD):
+        # Price every registered need uniformly -- the need carries its own
+        # requirement (severity source), so there is no per-resource logic here.
+        for need in self.needs:
+            r = need.resource
             reserves = sum(ag.qty(r) for ag in agents)
-            projected_consumption = self._projected_consumption(r, day, n)
+            projected_consumption = self._projected_consumption(need, day, n)
             # The AIC's view of capacity is pessimistic so it doesn't behave as
             # a perfect oracle: it under-estimates how much villagers can produce.
             base_capacity = (self._prod_ema[r] / max(today_mult, 1e-6)) * self.cfg.accountant_pessimism
@@ -110,15 +118,13 @@ class Accountant:
                 self.cfg.intrinsic_value[r] * (1.0 + 2.0 * ratio), 2
             )
 
-    def _projected_consumption(self, resource: Resource, day: int, n_agents: int) -> float:
-        total = 0.0
-        for d in range(day, day + self.cfg.accountant_horizon):
-            season = self.cfg.season_for_day(d)
-            if resource == Resource.WOOD:
-                total += n_agents * self.cfg.wood_per_day[season]
-            elif resource == Resource.FOOD:
-                total += n_agents * self.cfg.food_per_day
-        return total
+    def rewarded_needs(self) -> list[Need]:
+        """The needs whose met demand pays realized-effect contribution."""
+        return [need for need in self.needs if need.rewarded]
+
+    def _projected_consumption(self, need: Need, day: int, n_agents: int) -> float:
+        return sum(n_agents * need.daily_requirement(self.cfg, d)
+                   for d in range(day, day + self.cfg.accountant_horizon))
 
     # ---------- realized-effect payout ----------
     def reward_consumption(

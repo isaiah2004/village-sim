@@ -120,9 +120,30 @@ SimCore + contract  →  GameSession (session.py)  →  View (game.py, view_text
 
 ---
 
-## 4. What to build next (Phase 2 / "Track A — make the loop fun")
+## 4. What to build next
 
-**Already done this track:** contribution made *felt* (the news feed names *who*
+> **North star: [DESIGN.md](DESIGN.md).** Read it before choosing work. The index
+> is a **calculator, not the game**; never hardcode a scenario into it. The build
+> order is settled there: **(1) make Layer 2 (the index) universal — DONE below;
+> (2) Layer 1 world-model; (3) Layer 3 interventions.** Do not start Layer 1 or 3
+> until asked.
+
+**Layer 2 is now universal — the need registry.** "Need" is DATA (`needs.py`): a
+`Need` = an identity, the resource whose consumption meets it (the lineage
+attribution hook), a per-agent seasonal requirement (severity source), and whether
+meeting it is rewarded. The accountant prices and pays *every* registered need
+through one pipeline with **no per-resource code** (`accountant.start_day` /
+`rewarded_needs` / `reward_consumption`; `world._consumption_phase`). Wood is
+re-registered exactly as before — the **9 original golden scenarios are
+byte-identical** (`python regression.py`, no capture). Food is registered as pure
+data; flipping `cfg.reward_food_need` routes food through the identical
+reward+lineage pipeline (proven in `test_needs.py`, and locked as the additive
+`FOOD_NEED_BLIGHT` golden scenario — new rows only, existing 126 untouched). *This
+ended scenario-creep: adding a need is a registry row, never new index logic.*
+**Next per DESIGN.md is Layer 1 (a typed/located world-state problem model), then
+Layer 3 (interventions). Don't start them yet.**
+
+**Track A (make the loop fun) — done this track:** contribution made *felt* (the news feed names *who*
 you kept warm and *why* it was worth what it was — `ContributionDetail` event);
 a persistent **impact ledger**; the **warning** as a real second lever (costs an
 action, spreads visibly, and reports a **measured** end-of-year effect via a
@@ -146,10 +167,10 @@ playtest "much later"; until then, prefer low-risk, high-legibility work):
    cuts food gather yield to 12% in summer; `demo_blight.py` + `test_blight.py`.*
    A real summer crisis appears (idle village ~43 food unmet) and a food-stocking
    player rescues it. **Owner calls whether to turn it on in the game and playtest.**
-   *Follow-up (index change, needs owner sign-off):* the contribution index credits
-   WOOD consumption only (`world._consumption_phase`), so feeding the hungry earns
-   rescued welfare but no *score*. Scoring the food axis means extending
-   `reward_consumption` to food — flag-gate it and re-capture golden intentionally.
+   *Scoring the food axis is now handled the RIGHT way* — not as a food special-case
+   but via the universal need registry above (`cfg.reward_food_need`). Feeding the
+   hungry earns realized contribution through the same pipeline as wood; the blight
+   is just one mechanic that makes food scarce enough to be worth pricing.
 3. **NPC dialogue stub** — walk-up-and-talk that renders a villager's *actual*
    belief. `SimCore.belief(agent_id, resource)` already returns `(value,
    confidence)`. This is the first concrete step toward a pixel-art / UE5 body.

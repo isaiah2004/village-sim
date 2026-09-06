@@ -400,11 +400,15 @@ class World:
             self._per_agent_unmet[ag.id] = own_unmet
             if short_today:
                 self.day_short_agents += 1
-            wood_consumed, _ = result[Resource.WOOD]
-            # wood burned to meet a need = realized stabilising effect -> pay producers
-            self.accountant.reward_consumption(
-                Resource.WOOD, ag.id, wood_consumed, ctx.season, self.lineage, self.by_id
-            )
+            # A resource consumed to meet a registered need = realized stabilising
+            # effect -> pay its producers up the lineage. Driven by the need
+            # registry, so this is identical for wood, food, or any future need --
+            # no per-resource code. (Today only wood is a rewarded need by default.)
+            for need in self.accountant.rewarded_needs():
+                consumed_lots, _ = result[need.resource]
+                self.accountant.reward_consumption(
+                    need.resource, ag.id, consumed_lots, ctx.season, self.lineage, self.by_id
+                )
 
     # ---------- knowledge propagation API ----------
     def schedule_injection(self, day: int, target: str, claim: Claim,

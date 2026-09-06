@@ -166,6 +166,16 @@ class Config:
     woodlot_upkeep_food: float = 0.5  # food its workers eat per day, PER LEVEL; no food -> it idles
     woodlot_max_level: int = 5
 
+    # ----- needs registry (Layer 2: the index prices ANY registered problem) -----
+    # "Need" is data, not code (see DESIGN.md). The accountant prices and attributes
+    # every registered need through one uniform pipeline -- no per-scenario logic.
+    # Wood is always a rewarded need (exactly as it has always behaved). Food is
+    # always registered and PRICED like wood; whether meeting it PAYS realized-effect
+    # contribution is opt-in below, default OFF so the golden master stays
+    # byte-identical. Turning it on is pure data: it proves the index is universal,
+    # not a food special-case.
+    reward_food_need: bool = False
+
     # ----- AI Accountant (observer, not planner) -----
     accountant_enabled: bool = True
     # How realized contribution is PRICED when your resource meets someone else's

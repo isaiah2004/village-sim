@@ -39,6 +39,10 @@ class AccountantState:
     # they compare it to the actual market price to spot opportunities.
     fair_price: dict = field(default_factory=dict)
     predicted_deficit: dict = field(default_factory=dict)
+    # The forecast scarcity ratio (0..1) per resource -- the same signal that sets
+    # fair value. Exposed so Layer 1's problem model can read a scarcity problem's
+    # severity from the index's OWN measure. Observational; recomputed each day.
+    scarcity: dict = field(default_factory=dict)
     paid_today: float = 0.0
     total_paid: float = 0.0
     total_penalty: float = 0.0
@@ -90,6 +94,7 @@ class Accountant:
         if not self.cfg.accountant_enabled:
             self.state.bounty = {r: 0.0 for r in Resource}
             self.state.fair_price = {r: self.cfg.intrinsic_value[r] for r in Resource}
+            self.state.scarcity = {r: 0.0 for r in Resource}
             return
         n = len(agents)
         today_mult = self.cfg.season_yield_mult[self.cfg.season_for_day(day)]
@@ -109,6 +114,7 @@ class Accountant:
             deficit = projected_consumption - (reserves + projected_production)
             ratio = max(0.0, min(1.0, deficit / max(projected_consumption, 1e-6)))
             self.state.predicted_deficit[r] = deficit
+            self.state.scarcity[r] = ratio       # Layer 1 reads this as problem severity
             self.state.bounty[r] = round(self.cfg.accountant_bounty_max * ratio, 3)
             # Fair value: intrinsic, lifted by scarcity. Player compares this
             # to the actual market price to spot under/over-valued goods.

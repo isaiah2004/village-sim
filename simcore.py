@@ -237,10 +237,16 @@ class SimCore:
                 bounty=round(st.bounty.get(r, 0.0), 4),
             ))
 
+        problems = [
+            C.ProblemView(ps.problem.key, ps.problem.kind, ps.problem.location,
+                          ps.problem.subject, ps.severity)
+            for ps in getattr(w, "problems", [])
+        ]
+
         vu = getattr(w, "village_unmet", {Resource.WOOD: 0.0, Resource.FOOD: 0.0})
         return C.Snapshot(
             day=self._day, season=self.cfg.season_for_day(self._day).value,
-            agents=agents, markets=markets,
+            agents=agents, markets=markets, problems=problems,
             village_unmet_wood=round(vu.get(Resource.WOOD, 0.0), 4),
             village_unmet_food=round(vu.get(Resource.FOOD, 0.0), 4),
             shortage_agents=getattr(w, "day_short_agents", 0),
@@ -265,6 +271,11 @@ class SimCore:
 
     def market(self, resource: Resource) -> C.MarketView:
         return next(m for m in self.snapshot().markets if m.resource == resource)
+
+    def problems(self) -> list:
+        """The world's live problem board (Layer 1): typed, located, severity-ranked
+        problems the player could resolve. Read-only; sorted worst-first."""
+        return sorted(self.snapshot().problems, key=lambda p: -p.severity)
 
     def welfare(self) -> dict:
         return self.world.metrics.summary()

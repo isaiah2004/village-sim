@@ -32,7 +32,10 @@ from config import Resource, Season
 #   1.0 (2026-09-05) frozen baseline.
 #   1.1 (2026-09-05) additive: ContributionDetail event (the felt "why" behind a
 #       ContributionPaid). Minor bump -- older bodies ignore the new type safely.
-CONTRACT_VERSION = "1.1"
+#   1.2 (2026-09-06) additive: ProblemView + Snapshot.problems -- Layer 1's
+#       world-state problem board (typed, located, severity), read-only. Minor
+#       bump; the field defaults to [] so older bodies are unaffected.
+CONTRACT_VERSION = "1.2"
 
 __all__ = [
     "CONTRACT_VERSION", "Resource", "Season",
@@ -40,7 +43,7 @@ __all__ = [
     "DayAdvanced", "Produced", "TradeCleared", "Settled", "ContributionPaid",
     "ContributionDetail", "Shortage", "HoardFlagged", "HoldingFee", "AssetBuilt",
     "BeliefState", "Event", "EVENT_TYPES",
-    "AgentView", "MarketView", "Snapshot",
+    "AgentView", "MarketView", "ProblemView", "Snapshot",
 ]
 
 
@@ -234,11 +237,25 @@ class MarketView:
 
 
 @dataclass
+class ProblemView:
+    """A world-state problem the player could resolve (Layer 1). Typed, located,
+    with a severity (0..1) the sim tracks. This is 'what is the problem?' made
+    legible -- the thing the index prices when the player drives it down and,
+    later, the thing an intervention targets. Read-only render state."""
+    key: str                  # stable identity, e.g. "scarcity:wood"
+    kind: str                 # TYPE, e.g. "scarcity" | "capital_gap"
+    location: str             # WHERE, e.g. "village"
+    subject: str              # what it concerns, e.g. "wood"
+    severity: float           # 0..1; 0 = resolved/absent, 1 = worst
+
+
+@dataclass
 class Snapshot:
     day: int
     season: str
     agents: list = field(default_factory=list)     # list[AgentView]
     markets: list = field(default_factory=list)    # list[MarketView]
+    problems: list = field(default_factory=list)   # list[ProblemView] (Layer 1)
     village_unmet_wood: float = 0.0
     village_unmet_food: float = 0.0
     shortage_agents: int = 0

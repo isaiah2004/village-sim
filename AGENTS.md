@@ -125,8 +125,8 @@ SimCore + contract  →  GameSession (session.py)  →  View (game.py, view_text
 > **North star: [DESIGN.md](DESIGN.md).** Read it before choosing work. The index
 > is a **calculator, not the game**; never hardcode a scenario into it. The build
 > order is settled there: **(1) make Layer 2 (the index) universal — DONE below;
-> (2) Layer 1 world-model; (3) Layer 3 interventions.** Do not start Layer 1 or 3
-> until asked.
+> (2) Layer 1 world-model — first piece DONE below; (3) Layer 3 interventions —
+> not started.** Do not start Layer 3 until asked.
 
 **Layer 2 is now universal — the need registry.** "Need" is DATA (`needs.py`): a
 `Need` = an identity, the resource whose consumption meets it (the lineage
@@ -140,8 +140,27 @@ data; flipping `cfg.reward_food_need` routes food through the identical
 reward+lineage pipeline (proven in `test_needs.py`, and locked as the additive
 `FOOD_NEED_BLIGHT` golden scenario — new rows only, existing 126 untouched). *This
 ended scenario-creep: adding a need is a registry row, never new index logic.*
-**Next per DESIGN.md is Layer 1 (a typed/located world-state problem model), then
-Layer 3 (interventions). Don't start them yet.**
+
+**Layer 1 is now data — the world-state problem board (first piece).** Problems are
+DATA (`problems.py`): a `Problem` = key, TYPE (kind), LOCATION, subject; its
+**severity (0..1) is read from world-state each day**, so the sim tracks it as the
+world moves. Two authored TYPES ship — `scarcity` (reuses the index's own scarcity
+signal) and `capital_gap` (a non-consumption "missing infrastructure" problem, the
+mill shape). The board is observational (`problems.refresh` in `world.begin_day`,
+mutates nothing → the **140 golden metrics stay byte-identical**, no capture) and
+exposed additively on the contract (`ProblemView` + `Snapshot.problems`, **v1.1 →
+v1.2**, plus `SimCore.problems()`). `demo_problems.py` shows it over a year;
+`test_problems.py` proves typed/located/data, world-tracked severity, that building
+a woodlot lowers the capital gap, and that a scarcity problem's severity *is* the
+index's own signal (one definition shared by Layers 1 and 2). This is DESIGN.md
+question 2 ("what is the problem?") made first-class.
+
+**Layer 1 — what remains (frontier):** more problem TYPES as needed; *located*
+problems beyond the single "village" (regions arrive with the Stage-2 knowledge
+layer); and the bridge letting an intervention **target** a problem and the index
+**price** the severity drop it causes (the ghost-counterfactual already
+generalizes). **Next per DESIGN.md is Layer 3 (interventions — the mill), which
+needs this world-state to act on. Don't start Layer 3 yet.**
 
 **Track A (make the loop fun) — done this track:** contribution made *felt* (the news feed names *who*
 you kept warm and *why* it was worth what it was — `ContributionDetail` event);

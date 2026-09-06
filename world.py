@@ -31,6 +31,7 @@ from knowledge import Claim, PropagationEngine, SocialGraph
 from lineage import LineageGraph
 from market import CallMarket
 from metrics import Metrics
+import problems
 
 _ZERO_UNMET = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
 
@@ -57,6 +58,9 @@ class World:
         self.market = CallMarket()
         self.accountant = Accountant(cfg)
         self.metrics = Metrics(cfg)
+        # Layer 1: the world's problem board (typed, located, severity-tracked).
+        # Observational -- refreshed from world-state each day, mutates nothing.
+        self.problems = problems.build_board(cfg)
         self.day = 0
         self.ref_price = {r: cfg.intrinsic_value[r] for r in Resource}
 
@@ -182,6 +186,9 @@ class World:
             bounty=dict(self.accountant.state.bounty),
             fair_price=dict(self.accountant.state.fair_price),
         )
+        # Layer 1: refresh the problem board from the day's world-state (the
+        # accountant's scarcity signal is now fresh). Pure read -- no sim effect.
+        problems.refresh(self.problems, self)
 
     def execute_day(self) -> None:
         """Run today's production -> market -> consumption -> belief -> surveillance."""

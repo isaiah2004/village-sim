@@ -103,6 +103,41 @@ def test_gates() -> list:
     return fails
 
 
+def test_default_hit() -> list:
+    """A loan default is a bad deed that PROPAGATES: as word of it spreads, the
+    defaulter's standing is discounted (DESIGN.md's 'a reputation hit that
+    propagates'), and the penalty is tunable."""
+    from world import World
+    fails = []
+
+    def standing_after_default(penalty: float) -> tuple:
+        cfg = scen.make_config("frostpine", reputation_propagation=True,
+                               reputation_default_penalty=penalty)
+        w = World(cfg, player_strategy="idle",
+                  population=scen.build_population(scen.get_scenario("frostpine")))
+        p = w.player
+        p.bonus_earned = 300.0
+        for d in range(40):                       # spread the good deed -> full standing
+            w.begin_day(d); w.execute_day()
+        before = standing(p, w)
+        w.reputation.record_default(p.id, 40)
+        for d in range(40, 90):                   # let word of the default spread
+            w.begin_day(d); w.execute_day()
+        return before, standing(p, w)
+
+    before, after = standing_after_default(1.0)
+    if not (before > 1.0):
+        fails.append(f"default-hit: player should have real standing first ({before})")
+    if not (after < before * 0.2):
+        fails.append(f"default-hit: a fully-known default barely dented standing "
+                     f"({before:.1f} -> {after:.1f})")
+    # a softer penalty hurts less
+    _, soft = standing_after_default(0.5)
+    if not (soft > after):
+        fails.append(f"default-hit: a lower penalty should hurt less ({soft:.1f} vs {after:.1f})")
+    return fails
+
+
 def test_determinism() -> list:
     a = _run(True)
     b = _run(True)
@@ -114,7 +149,8 @@ def test_determinism() -> list:
 def main() -> int:
     all_fails = []
     tests = (("GOLDEN-SAFE", test_golden_safe), ("RAMP", test_ramp),
-             ("GATES", test_gates), ("DETERMINISM", test_determinism))
+             ("GATES", test_gates), ("DEFAULT-HIT", test_default_hit),
+             ("DETERMINISM", test_determinism))
     for name, fn in tests:
         fails = fn()
         print(f"[{'ok' if not fails else 'FAIL'}] {name}")

@@ -180,7 +180,11 @@ def standing(agent, world=None) -> float:
     if rep is None or agent is None:
         return base
     reach = rep.reach(agent.id, world._active_ids)
-    return round(base * reach, 6)
+    # a propagated default discounts standing: the more of the village that has
+    # heard you defaulted, the less your track record is trusted (penalty tunable).
+    disrepute = rep.disrepute(agent.id, world._active_ids)
+    penalty = getattr(world.cfg, "reputation_default_penalty", 1.0)
+    return round(base * reach * max(0.0, 1.0 - penalty * disrepute), 6)
 
 
 def _target_severity(world, problem_key: str) -> float:

@@ -47,6 +47,16 @@ class ReputationNetwork:
                       objective_truth=True, root_id=agent_id, origin_day=day)
         self.engine.inject(agent_id, claim, authority=1.0, day=day)
 
+    def record_default(self, agent_id: str, day: int) -> None:
+        """Word of a loan DEFAULT -- a bad deed. It spreads the same way as good
+        deeds (its own subject key `default:<id>`) and discounts the defaulter's
+        standing via `disrepute` below (DESIGN.md's 'a reputation hit that
+        propagates'). Originates at the defaulter's node, magnitude 1.0."""
+        key = f"default:{agent_id}"
+        claim = Claim(resource=key, magnitude=1.0, objective_truth=True,
+                      root_id=key, origin_day=day)
+        self.engine.inject(agent_id, claim, authority=1.0, day=day)
+
     def step(self, day: int, active_ids: set) -> None:
         self.engine.step(day, active_ids)
 
@@ -55,9 +65,17 @@ class ReputationNetwork:
 
     def reach(self, agent_id: str, active_ids) -> float:
         """Fraction of OTHER active agents who have heard of this agent's deeds."""
-        others = [a for a in active_ids if a != agent_id]
+        return self._heard_fraction(agent_id, agent_id, active_ids)
+
+    def disrepute(self, agent_id: str, active_ids) -> float:
+        """Fraction of OTHER active agents who have heard this agent DEFAULTED.
+        Zero unless a default was recorded; rises as word of it spreads."""
+        return self._heard_fraction(f"default:{agent_id}", agent_id, active_ids)
+
+    def _heard_fraction(self, subject: str, exclude_id: str, active_ids) -> float:
+        others = [a for a in active_ids if a != exclude_id]
         if not others:
             return 0.0
         thr = self.cfg.reputation_aware_threshold
-        heard = sum(1 for h in others if self.engine.scarcity(h, agent_id) >= thr)
+        heard = sum(1 for h in others if self.engine.scarcity(h, subject) >= thr)
         return heard / len(others)

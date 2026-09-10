@@ -149,6 +149,7 @@ class Config:
     reputation_propagation: bool = False
     reputation_deed_scale: float = 60.0     # contribution that counts as a "fully notable" deed (magnitude 1.0)
     reputation_aware_threshold: float = 0.05  # min held belief to count as "has heard of you"
+    reputation_default_penalty: float = 1.0   # how much a fully-known default discounts standing (0..1)
 
     # ----- capital goods (Phase 1: does contribution generalise past consumables?) -----
     # A WOODLOT is an owned, persistent asset that YIELDS wood every day. It tests

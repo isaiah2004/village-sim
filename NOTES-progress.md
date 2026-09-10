@@ -229,3 +229,17 @@ negotiates 80 at 15%, sim funds + founds the mill (woodlot Lv1, loan recorded); 
 unproven borrower is declined by the merchant. New sub-test LAYER3-FINANCING in
 test_view_play.py. golden.json UNCHANGED (generic body config + a new command; the
 sim/contract/golden untouched). check.py green, 21 gates.
+
+### Item 8 — loan default → propagated reputation hit ✓ (branch: claude/default-reputation)
+
+Closes DESIGN.md §8's remaining loan consequence: a default is a bad DEED that
+spreads. When `world._loan_phase` marks a loan defaulted, it records a default fact
+in the reputation network (keyed `default:<id>`); `standing` is then discounted by
+`disrepute` (the fraction of the village that has heard of the default), tunable via
+`reputation_default_penalty` (default 1.0). So a defaulter's hard-won standing
+collapses as word travels -- verified: 300 -> 0 at full penalty, softened at 0.5.
+
+Runs on the same reputation rng/graph (own stream), flag-gated (reputation off by
+default), and persisted for free (default facts are ordinary reputation beliefs).
+New sub-test DEFAULT-HIT in test_reputation.py. golden.json UNCHANGED. check.py
+green, 21 gates.

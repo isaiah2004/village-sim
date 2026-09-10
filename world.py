@@ -429,6 +429,12 @@ class World:
                     loan.balance = round(max(0.0, loan.balance - seized), 6)
                     loan.defaulted = True
                     self._loan_events.append((ag.id, loan.lender_id, "defaulted", round(seized, 6), loan.balance))
+                    # a default is a DEED too -- a bad one. Word of it spreads through
+                    # the reputation network and discounts the defaulter's standing
+                    # (DESIGN.md's "a reputation hit that propagates"). No-op unless
+                    # reputation propagation is on -> golden-safe.
+                    if self.reputation is not None:
+                        self.reputation.record_default(ag.id, self.day)
 
     def _run_woodlots(self) -> dict:
         """

@@ -148,5 +148,25 @@ def demo() -> None:
     print(dashboard(s)); show_result(s)
 
 
+def _scenario_arg(argv) -> str | None:
+    """`--scenario <name>` selects a world. frostpine is this file's authored game
+    (GameSession); any other registered world is played through the generic,
+    scenario-agnostic body in view_play.py -- so `view_text.py` can select and play
+    ANY scenario without frostpine assumptions leaking into a world it doesn't fit."""
+    if "--scenario" in argv:
+        i = argv.index("--scenario")
+        if i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
 if __name__ == "__main__":
-    (demo if "--demo" in sys.argv else play)()
+    _name = _scenario_arg(sys.argv)
+    if _name and _name != "frostpine":
+        import view_play
+        if "--demo" in sys.argv:
+            view_play.demo([_name])
+        else:
+            view_play.play(_name)
+    else:
+        (demo if "--demo" in sys.argv else play)()

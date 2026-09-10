@@ -447,4 +447,16 @@ class Game:
 
 
 if __name__ == "__main__":
+    import sys
+    # This pygame body renders the AUTHORED frostpine game (its winter/wood UI is
+    # bespoke). Selecting any OTHER registered world is supported through the
+    # scenario-agnostic body in view_play.py, which drives the same SimCore
+    # contract -- so `game.py --scenario <name>` hands off to it rather than
+    # forcing a frostpine-shaped UI onto a world it doesn't fit.
+    if "--scenario" in sys.argv:
+        i = sys.argv.index("--scenario")
+        _name = sys.argv[i + 1] if i + 1 < len(sys.argv) else "frostpine"
+        if _name != "frostpine":
+            import view_play
+            raise SystemExit(view_play.play(_name))
     Game().run()

@@ -42,6 +42,7 @@ STEPS = [
     ("modularity",           [sys.executable, "test_modularity.py"]),
     ("demand events",        [sys.executable, "test_demand.py"]),
     ("reputation",           [sys.executable, "test_reputation.py"]),
+    ("playable view",        [sys.executable, "test_view_play.py"]),
 ]
 
 

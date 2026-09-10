@@ -33,3 +33,30 @@ A's only contract change was the additive `AgentView.kind` value "institution").
 golden 14 scenarios / 197 metrics; frostpine + the PR-#1 baselines byte-identical.
 Cross-cutting sanity: demo_scenarios (all 5 worlds), demo_llm_merchant (scripted),
 demo_reputation all run. **check.py: FOUNDATION HOLDS, 17 gates.**
+
+## Phase 2 — backlog
+
+### Item 1 — scenario-agnostic playable View ✓ (branch: claude/playable-any-scenario)
+
+Delivered a NEW generic playable body, `view_play.py`, that selects and plays ANY
+registered world purely through the SimCore contract — it reads only the snapshot's
+generic fields (scenario/consumables/primary_resource/village_unmet, MarketView,
+AgentView.holdings, problems, interventions) and maps typed commands (gather / buy /
+sell / build / do <key> / warn) to contract intents. `--demo` scripts a full-year
+playthrough of every scenario; interactive mode is a per-day command loop.
+`view_text.py --scenario <name>` and `game.py --scenario <name>` hand any non-frostpine
+world to it.
+
+FLAG / decision for the human: I did NOT rewrite the pygame `game.py` UI or the
+frostpine `GameSession` to be generic. `GameSession` is the *authored frostpine game*
+(win = survive winter, warn-winter, starvation, the counterfactual, villager lines
+about wood/winter) — generalizing all of that is judgment-heavy authored-content work
+and risks the game-save/load golden, and the pygame layout can't be visually verified
+in this environment. The honest architecture is "many bodies over one contract," so the
+scenario-agnostic playable View is a separate body (`view_play.py`); frostpine's
+authored game stays byte-identical. If you'd rather the pygame body itself render every
+world generically, that's a dedicated UI task for a session that can see the screen.
+
+New gate `test_view_play.py` (plays-all / renders / commands-have-effect) → check.py
+18 gates. golden.json UNCHANGED (this item is a new body + a `--scenario` launch arg;
+no sim/contract change). check.py green.

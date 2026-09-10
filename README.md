@@ -91,7 +91,8 @@ numbers byte-for-byte.
 | `config.py` | All tunables; `Resource`/`Season` enums. |
 | `session.py` | `GameSession` — engine-agnostic game rules (turn flow, action economy, win/lose, impact ledger, counterfactual, semantic news feed). **No rendering.** |
 | `game.py` | pygame **View** ("Say the Word"). Window, palette, layout, input→intent. |
-| `view_text.py` | Terminal **View** — a second body proving the skin is swappable. |
+| `view_text.py` | Terminal **View** of the frostpine authored game (`--scenario <name>` hands any other world to `view_play.py`). |
+| `view_play.py` | **Scenario-agnostic playable View** — pick and play ANY registered world through the contract (`python view_play.py <name>`; `--demo` plays them all). |
 | `persistence.py` | Full-fidelity JSON save/load for `SimCore`. |
 | `check.py` | The foundation gate: regression + conformance + persistence + unit tests. |
 | `regression.py` + `golden.json` | Golden-master safety net (14 scenarios, 197 metrics — frostpine's rows byte-identical). |

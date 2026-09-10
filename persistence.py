@@ -37,8 +37,10 @@ _ZERO = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
 SAVE_FORMAT_VERSION = 1
 
 # Agent classes that a population spec can name (Player is created by the World
-# itself, not via the spec).
-_AGENT_CLASSES = {c.__name__: c for c in (A.Villager, A.Dependent, A.MarketMaker, A.Merchant)}
+# itself, not via the spec). Derived from the archetype registry so EVERY spawnable
+# archetype -- including new ones like InstitutionBuyer -- round-trips through
+# save/load with no per-class edit here.
+_AGENT_CLASSES = {cls.__name__: cls for cls in A.ARCHETYPES.values()}
 
 _RES_VALUES = {r.value for r in Resource}
 _SEASON_VALUES = {s.value for s in Season}

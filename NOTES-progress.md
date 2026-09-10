@@ -60,3 +60,19 @@ world generically, that's a dedicated UI task for a session that can see the scr
 New gate `test_view_play.py` (plays-all / renders / commands-have-effect) → check.py
 18 gates. golden.json UNCHANGED (this item is a new body + a `--scenario` launch arg;
 no sim/contract change). check.py green.
+
+### Item 2 — cross-scenario hardening ✓ (branch: claude/cross-scenario-hardening)
+
+New gate `test_scenarios.py` asserts, for EVERY registered world: runs a full year
+headless; the crisis actually fires (nonzero total unmet of the crisis good AND
+nonzero contribution paid AND crisis-phase price > calm-phase price — no inert
+worlds); save/load round-trips BYTE-IDENTICALLY (serialize→load→serialize equal);
+and it drives through the SimCore contract with the generic snapshot reads present.
+
+BUG FOUND & FIXED (exactly what this item is for): `persistence._AGENT_CLASSES` was a
+hardcoded list missing Task A's `InstitutionBuyer`, so guildhall and plaguewatch
+could not be loaded (save→load raised "unknown agent class"). Fixed by deriving the
+map from `agents.ARCHETYPES`, so every spawnable archetype (and any future one)
+round-trips with no per-class edit. All 5 worlds now save/load byte-identical.
+
+golden.json UNCHANGED (the fix is on the load path only). check.py green, 19 gates.

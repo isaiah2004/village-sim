@@ -122,6 +122,72 @@ Systems this one example needs:
    negotiation + reputation-gating (the mill). Interventions need a world-state to
    act on, so this follows Layer 1.
 
+## Modularity contract — scenarios are DATA, not code
+
+The end state: adding a whole new world archetype is **"type a name and assign
+values."** No new branching logic, no per-scenario special cases anywhere in the
+sim or the index. A **scenario** is a named data bundle that selects and
+parameterizes these axes; `make_scenario(name)` builds a fully-configured world
+from it:
+
+- **Resources** — which goods exist and their params (intrinsic value; consumable
+  vs capital; daily consumption profile; base yield). e.g. wood, fish, grain, iron
+  ore, charcoal, potions.
+- **Drivers (cycles)** — named cyclical modulators with phases and per-phase
+  multipliers on specific resources' yield and/or consumption. *Winter* is one
+  driver; *Tides* is another. A driver is data:
+  `{name, phases:[{name, length, yield_mult:{res:…}, consume_mult:{res:…}}]}`.
+  Adding "Tides" must be exactly this — no code.
+- **Needs / Problems** — which resources/conditions the world tracks as a problem
+  (severity = the unmet amount), which the index then prices uniformly. Registry
+  entries (Layer 2's universal core).
+- **Market model** — pluggable and selected by name: `call_auction` (today's
+  spread-out double auction) or `guild` (fixed/capped price up to a daily quota,
+  with overflow routed to a secondary `call_auction` at a discount). New market
+  models plug in behind one interface.
+- **Population** — spawn specs: archetypes + counts + params (villagers,
+  dependents, market_maker/guild, adventurers, craftsmen, suppliers…).
+- **Capital goods** — which infrastructure exists and its input/output/upkeep
+  (woodlot, boat, smithy, charcoal kiln, mill).
+
+**Acceptance for "modular":** adding any of the scenarios below must be a single
+data entry with zero new logic; and the baseline scenario must reproduce the
+current golden master **byte-identical**.
+
+## First-MVP scenarios (build these; each proves one axis is truly data)
+
+1. **`frostpine`** *(baseline — the current world, re-expressed as a scenario)*.
+   Resources wood + food; driver = the four-season cycle (winter spikes wood
+   consumption and cuts yields); market = `call_auction`; population villagers +
+   dependents (who cannot cut wood and go cold first); need = winter warmth (wood).
+   **Anchors the golden — must stay byte-identical.**
+2. **`tidewater`** *(fisher village — proves a driver + resource are pure data)*.
+   Resources fish + grain (grain is bought in); driver = **`Tides`** (phases e.g.
+   spring-run high yield → summer → neap low → storm very low) modulating fish
+   yield; scarcity bites when the catch fails; population fishers + dependents
+   (net-menders / elderly who cannot fish and must buy it); need = the town's fish/
+   food. Success = "Tides" behaves like winter for *its* values with no new code.
+3. **`guildhall`** *(adventurer town — proves the market model is pluggable)*.
+   Resources = adventuring yields (e.g. monster parts, ore, potions), variable by an
+   expedition/danger driver; market = **`guild`** (buys at a set price up to a daily
+   quota; overflow → a secondary `call_auction` at a discount); population =
+   adventurers (produce via expeditions) + the guild + townsfolk/dependents who
+   need a critical good (e.g. healing potions); need = the town's supply of that
+   good. Success = swapping `call_auction`→`guild` is a config choice.
+4. **`emberforge`** *(craftsman town — proves multi-resource + structural scarcity +
+   capital as the contribution axis)*. Resources = raw materials wood + iron ore +
+   charcoal (constant, structural demand as crafting inputs) → crafted goods;
+   scarcity is chronic (consumption > supply), relieved by capital infrastructure
+   (a smithy / charcoal kiln); market = `call_auction`; population = craftsmen
+   (consume raw mats) + suppliers + dependents; need = steady raw-material supply.
+   Success = the index credits infrastructure that relieves an *ongoing* shortage,
+   with no cyclical driver at all.
+
+Together these four force real modularity: cyclical single-resource (`frostpine`,
+`tidewater`), a different market model (`guildhall`), and multi-resource structural
+scarcity relieved by capital (`emberforge`). If all four run from data and the
+baseline golden is unchanged, the system is genuinely universal.
+
 ## Non-negotiables (see AGENTS.md for detail)
 
 The wall (all actions through the contract); the frozen contract; the golden ritual;

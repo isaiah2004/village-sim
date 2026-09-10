@@ -55,20 +55,24 @@ class Intervention:
 # Authored, deterministic world-changes keyed by intervention. Load-bearing sim
 # code: this is the ONLY place an intervention touches world-state.
 def _effect_found_mill(world, agent, day: int) -> None:
-    """Establish an income-generating mill -- a woodlot capital asset financed by
-    CAPITAL rather than the founder's own labour and wood. It reuses the existing
-    capital-goods machinery: `world._run_woodlots` yields wood from it every day,
-    which lowers the capital-gap and wood-scarcity problems, and realized-effect
-    credit flows back to the founder through the asset's lineage lot. An existing
-    mill is upgraded a level instead (a bigger works)."""
+    """Establish an income-generating capital asset financed by CAPITAL rather than
+    the founder's own labour. It reuses the existing capital-goods machinery: the
+    scenario's capital good (frostpine's woodlot, emberforge's forge) yields its
+    output every day via `world._run_woodlots`, which lowers the capital-gap and
+    scarcity problems, and realized-effect credit flows back to the founder through
+    the asset's lineage lot. An existing asset is upgraded a level instead. The
+    capital good is DATA (scenario.capital), so this is not woodlot-specific."""
     from agents import Asset
-    wl = next((a for a in agent.assets if a.kind == "woodlot"), None)
+    spec = world._capital_spec()
+    if spec is None:
+        return
+    wl = next((a for a in agent.assets if a.kind == spec.kind), None)
     if wl is not None:
-        if wl.level < world.cfg.woodlot_max_level:
+        if wl.level < spec.max_level:
             wl.level += 1
         return
-    lot = world.lineage.new_lot(Resource.WOODLOT, agent.id, day, "build", 1.0, parents=[])
-    agent.assets.append(Asset(kind="woodlot", lot_id=lot.id, built_tick=day, level=1))
+    lot = world.lineage.new_lot(spec.kind, agent.id, day, "build", 1.0, parents=[])
+    agent.assets.append(Asset(kind=spec.kind, lot_id=lot.id, built_tick=day, level=1))
 
 
 EFFECTS = {
@@ -80,11 +84,16 @@ def build_library(cfg: Config) -> list[Intervention]:
     """The pre-authored action library, as DATA. Grows by adding rows here (and one
     effect per genuinely new world-change). The first rung: found a mill, gated by
     capital AND a track record of contribution -- the deed-then-bigger-deed ladder."""
+    # the capital good this intervention founds, and the problem it targets, come
+    # from the scenario (frostpine: woodlot -> capital_gap:wood; emberforge: forge
+    # -> capital_gap:iron). Data, so a new world's intervention needs no new code.
+    sc = getattr(cfg, "scenario", None)
+    out_res = sc.capital[0].output_resource if (sc and sc.capital) else "wood"
     return [
         Intervention(
             key="found_mill",
             title="Found a mill (income-generating infrastructure)",
-            targets="capital_gap:wood",
+            targets=f"capital_gap:{out_res}",
             capital_cost=80.0,
             min_standing=40.0,
             requires=("capital_goods_enabled",),

@@ -207,6 +207,10 @@ class LLMMerchant:
 
     def _call(self, view: C.MerchantView) -> dict:
         client = self._get_client()
+        # A strict tool call forces schema-valid `submit_decision` arguments -- the
+        # decision comes back as DATA, never free text to regex. Forced tool_choice
+        # is supported on the default haiku model; if a caller overrides `model` to
+        # one that rejects forced tool use, the call raises and we fail closed below.
         resp = client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
@@ -215,8 +219,13 @@ class LLMMerchant:
             tool_choice={"type": "tool", "name": "submit_decision"},
             messages=[{"role": "user", "content": _render_view(view)}],
         )
-        for block in resp.content:
-            if getattr(block, "type", None) == "tool_use" and block.name == "submit_decision":
+        # A safety refusal (HTTP 200, stop_reason "refusal") is a non-answer: fail
+        # closed, never a fabricated acceptance. (The stub client in tests carries no
+        # stop_reason, so this is a no-op there.)
+        if getattr(resp, "stop_reason", None) == "refusal":
+            raise ValueError("merchant declined (refusal)")
+        for block in (getattr(resp, "content", None) or []):
+            if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == "submit_decision":
                 return dict(block.input)
         raise ValueError("merchant returned no decision")
 

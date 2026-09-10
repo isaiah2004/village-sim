@@ -204,18 +204,24 @@ in here) and **negotiation** (`interventions.evaluate`, today a deterministic
 merchant; an LLM merchant replaces it AT THE EDGE — proposes/judges, sim validates,
 never mutates state).
 
-**Layer 3 — merchant negotiation + loans (MVP built).** You fund an intervention
-by negotiating a loan with a merchant. `merchant.py` (edge) has the `Merchant`
-protocol, a deterministic `ScriptedMerchant` (used everywhere in `check.py`), an
-edge-only fail-closed `LLMMerchant` (cheap `claude-haiku-4-5`, strict tool output,
-cached persona), and `negotiate()` capped at **3 rounds**. The settled terms enter
-the sim as the additive `AcceptDeal` intent (**contract v1.3 → v1.4**; +
-`DealResolved`/`LoanUpdated` events, `MerchantView`/`LoanView` reads,
-`SimCore.merchant_view`/`reputation`), where `world._do_accept_deal` is the HARD
-gate and `world._loan_phase` services a deterministic `Loan` (`cfg.loans_enabled`,
-default off → **140 golden metrics byte-identical**). `demo_merchant.py` shows the
-loop; `test_merchant.py` + `test_loans.py` cover it (LLM stubbed, never live in
-tests). Full design + the assumed decisions:
+**Layer 3 — merchant negotiation + loans (built; LLM edge now runnable).** You fund
+an intervention by negotiating a loan with a merchant. `merchant.py` (edge) has the
+`Merchant` protocol, a deterministic `ScriptedMerchant` (used everywhere in
+`check.py`), an edge-only fail-closed `LLMMerchant`, and `negotiate()` capped at
+**3 rounds**. The settled terms enter the sim as the additive `AcceptDeal` intent
+(**contract v1.3 → v1.4**; + `DealResolved`/`LoanUpdated` events,
+`MerchantView`/`LoanView` reads, `SimCore.merchant_view`/`reputation`), where
+`world._do_accept_deal` is the HARD gate and `world._loan_phase` services a
+deterministic `Loan` (`cfg.loans_enabled`, default off → **140 golden metrics
+byte-identical**). The **LLM adapter is a real, runnable edge negotiator**: one
+`client.messages.create` with a cached persona, a strict `submit_decision` tool
+(schema-valid data, not regexed text), `claude-haiku-4-5` (a cheap bounded NPC
+judgment; `model=` overrides to Sonnet 5), fail-closed on refusal/error/missing
+SDK — verified against the bundled `claude-api` skill. `demo_llm_merchant.py` runs
+the edge loop end-to-end (`--live` for the model; scripted + offline by default);
+`eval_llm_merchant.py` grades judgment + a prompt-injection case on demand
+(`--live` only, out of `check.py`). `test_merchant.py` + `test_loans.py` cover the
+sim path (LLM stubbed, never live in tests). Full design + the assumed decisions:
 [docs/llm-merchant-negotiation.md](docs/llm-merchant-negotiation.md).
 
 **Layer 3 — what remains (frontier, the actual game):** more interventions in the

@@ -20,7 +20,8 @@ from config import Resource, Season
 from session import GameSession
 
 CMDS = """commands:  q gather wood   w gather food   e woodlot   d warn winter
-           s sell wood   b buy food   f fast-forward   [enter] end day   x quit"""
+           s sell wood   b buy food   f fast-forward   t listen to the village
+           save / load   [enter] end day   x quit"""
 
 
 def dashboard(s: GameSession) -> str:
@@ -43,7 +44,28 @@ def dashboard(s: GameSession) -> str:
     ]
     for text, tag in s.news[-5:]:
         lines.append(f"   [{tag}] {text}")
+    # the village's own voice -- each line is that villager's real belief,
+    # read through the same contract the sim runs on (SimCore.belief()).
+    voices = s.worried_voices(2)
+    if voices:
+        lines.append("voices:")
+        for aid, line, _tag in voices:
+            lines.append(f'   {aid}: "{line}"')
     return "\n".join(lines)
+
+
+def talk(s: GameSession) -> None:
+    """Listen to the whole village -- every household's line is a render of what
+    it actually believes about the winter, straight from SimCore.belief()."""
+    print("-" * 64)
+    print("You stop and listen. The village speaks its mind:")
+    for a in s.snap.agents:
+        if a.is_player or a.kind == "market_maker":
+            continue
+        line, _tag = s.villager_line(a.id)
+        who = "dependent" if a.kind == "dependent" else "villager"
+        print(f'   {a.id} ({who}): "{line}"')
+    print("-" * 64)
 
 
 def apply(s: GameSession, cmd: str) -> bool:
@@ -51,9 +73,20 @@ def apply(s: GameSession, cmd: str) -> bool:
     cmd = cmd.strip().lower()
     if cmd in ("x", "quit"):
         return False
+    if cmd == "save":
+        path = s.save_to_file()
+        print(f"  [saved] game written to {path} (day {s.day}).")
+        return True
+    if cmd == "load":
+        if s.load_from_file():
+            print(f"  [loaded] resumed on day {s.day}.")
+        else:
+            print("  [load] no save file found.")
+        return True
     if cmd == "q": s.gather(Resource.WOOD)
     elif cmd == "w": s.gather(Resource.FOOD)
     elif cmd == "e": s.build_woodlot()
+    elif cmd == "t": talk(s)
     elif cmd == "d": s.warn()
     elif cmd == "s": s.trade(Resource.WOOD, "sell")
     elif cmd == "b": s.trade(Resource.FOOD, "buy")

@@ -30,6 +30,11 @@ from agents import Dependent, MarketMaker, SpawnSpec, Villager
 from config import Config, Resource
 
 
+def _rv(r):
+    """Resource id as a display string (tolerant of enum or string)."""
+    return r.value if hasattr(r, 'value') else r
+
+
 def make_config() -> Config:
     cfg = Config()
     cfg.years = 1.0
@@ -69,7 +74,6 @@ class GameSession:
     def new_game(self) -> None:
         self.cfg = self._mk_cfg()
         self.core = SimCoreFactory(self.cfg, self._mk_pop)
-        self.snap = self.core.begin_turn()
         self.stamina_used = 0
         self.queued: list[str] = []
         self.news: list[tuple[str, str]] = []      # (text, semantic tag)
@@ -89,7 +93,19 @@ class GameSession:
         self.phase = "playing"                      # 'playing' | 'ended'
         self.over_reason = ""
         self.result: dict | None = None
+        self._boundary: dict = {}                   # last clean-boundary save
         self._log("A new year begins. Winter is far off -- but only you can see it coming.", "system")
+        self._enter_day()
+
+    def _enter_day(self) -> None:
+        """Stash a clean-boundary save, THEN begin the day for the UI. The save
+        must be captured here -- between commit_turn and begin_turn -- because
+        begin_day applies per-day effects (stamina refresh, the dependent
+        stipend) that would double-apply if a mid-turn save were reloaded and
+        begin_day ran again. Capturing pre-begin makes save/load round-trip
+        byte-identical (see test_save_load_game.py)."""
+        self._boundary = self._make_boundary()
+        self.snap = self.core.begin_turn()
 
     # --------------------------------------------------------------------- reads
     def me(self):
@@ -97,6 +113,67 @@ class GameSession:
 
     def market(self, r: Resource):
         return next(m for m in self.snap.markets if m.resource == r)
+
+    # --------------------------------------------------------------- npc voices
+    # The village speaks its own belief. A villager's line is derived ONLY from
+    # what they actually believe about the winter -- read straight through the
+    # contract via SimCore.belief() -- so the words a body shows are the same
+    # scarcity signal that drives their panic-buying underneath. This is a pure
+    # read: rendering belief, never changing it. A line carries a semantic tag
+    # (never a colour), so a View skins it -- text bubble, sprite barks, audio.
+    def villager_line(self, agent_id: str) -> tuple[str, str]:
+        """(spoken_text, semantic_tag) for one agent, reflecting their real
+        belief about the coming winter (wood scarcity). Confidence sets the
+        register -- rumour heard once vs. conviction independently corroborated;
+        magnitude sets how dire. Dependents add that they cannot cut their own
+        wood, the reason they go cold first. Cold-today colours the tag."""
+        view = next((a for a in self.snap.agents if a.id == agent_id), None)
+        kind = view.kind if view is not None else "villager"
+        dependent = kind == "dependent"
+        cold = agent_id in self.cold_today
+        # THE read through the wall: this agent's held belief about wood.
+        value, confidence = self.core.belief(agent_id, Resource.WOOD)
+
+        if confidence < 0.05 or value < 0.05:
+            line = ("Winter? A long way off yet. The woodshed can wait."
+                    if not dependent else
+                    "Wood's dear, but there's time. Someone will have it to sell.")
+            tag = "system"
+        elif confidence < 0.35:
+            line = "There's a rumour the winter'll come hard. Talk, most likely."
+            tag = "hint"
+        elif confidence < 0.60:
+            line = ("Folk say the cold comes early. I've begun laying wood by, "
+                    "just in case.")
+            tag = "word"
+        elif value < 0.55:
+            line = "The winter's coming and it'll bite. I'm cutting all the wood I can."
+            tag = "word"
+        else:
+            line = ("A cruel winter's nearly on us -- I cut wood every hour I have "
+                    "and it's still not enough.")
+            tag = "word"
+
+        if dependent and confidence >= 0.35:
+            line += " And I can't fell my own -- I must buy, and pray there's wood to sell."
+        if cold:
+            line = "I'm cold. " + line
+            tag = "dependent_cold" if dependent else "cold"
+        return line, tag
+
+    def worried_voices(self, n: int = 2) -> list[tuple[str, str, str]]:
+        """The n most-worried non-player, non-market voices, as
+        (agent_id, spoken_text, tag), sorted by belief pressure (value x
+        confidence). What the village would say if you stopped to listen."""
+        speakers = []
+        for a in self.snap.agents:
+            if a.is_player or a.kind == "market_maker":
+                continue
+            value, confidence = self.core.belief(a.id, Resource.WOOD)
+            line, tag = self.villager_line(a.id)
+            speakers.append((value * confidence, a.id, line, tag))
+        speakers.sort(key=lambda t: -t[0])
+        return [(aid, line, tag) for _, aid, line, tag in speakers[:n]]
 
     @property
     def day(self) -> int:
@@ -119,6 +196,93 @@ class GameSession:
     def _log(self, text: str, tag: str = "system") -> None:
         self.news.append((text, tag))
         self.news = self.news[-8:]
+
+    # --------------------------------------------------------------- persistence
+    # A save is the whole GAME, not just the sim: the sim state goes through the
+    # contract (SimCore.serialize/load -- the wall holds), and the session layer
+    # adds its own game state (the news feed, the impact ledger, warning history,
+    # win/lose). Both are captured at a clean day boundary by _enter_day, so a
+    # reload lands exactly where the save was taken and continues byte-identically.
+    SAVE_FORMAT = 1
+    DEFAULT_SAVE_PATH = "savegame.save.json"
+
+    def _session_state(self) -> dict:
+        """JSON-safe snapshot of the session's own (non-sim) game state."""
+        return {
+            "news": [list(item) for item in self.news],
+            "cold_today": sorted(self.cold_today),
+            "warned_today": self.warned_today,
+            "warn_ever": self.warn_ever,
+            "starving": self.starving,
+            "warn_days": list(self.warn_days),
+            "impact": {k: dict(v) for k, v in self.impact.items()},
+            "wood_awareness": self.wood_awareness,
+            "wood_roots": self.wood_roots,
+            "aware_bucket": self._aware_bucket,
+            "hoard_hinted": self.hoard_hinted,
+            "phase": self.phase,
+            "over_reason": self.over_reason,
+            "result": self.result,
+        }
+
+    def _restore_session(self, s: dict) -> None:
+        self.news = [tuple(item) for item in s["news"]]
+        self.cold_today = set(s["cold_today"])
+        self.warned_today = s.get("warned_today", False)
+        self.warn_ever = s["warn_ever"]
+        self.starving = s["starving"]
+        self.warn_days = list(s["warn_days"])
+        self.impact = {k: dict(v) for k, v in s["impact"].items()}
+        self.wood_awareness = s["wood_awareness"]
+        self.wood_roots = s["wood_roots"]
+        self._aware_bucket = s["aware_bucket"]
+        self.hoard_hinted = s["hoard_hinted"]
+        self.phase = s["phase"]
+        self.over_reason = s["over_reason"]
+        self.result = s["result"]
+
+    def _make_boundary(self) -> dict:
+        """A save taken at THIS day boundary: sim (through the wall) + session."""
+        return {"sim": self.core.serialize(), "session": self._session_state()}
+
+    def save(self) -> dict:
+        """A JSON-safe save of the whole game at the current day boundary."""
+        return {"game_save_format": self.SAVE_FORMAT, **self._boundary}
+
+    def load(self, blob: dict) -> None:
+        """Restore a game produced by save(). Rebuilds the sim via the contract
+        (SimCore.from_save) and re-enters the saved day exactly as _enter_day
+        does, so play continues identically from here."""
+        fmt = blob.get("game_save_format")
+        if fmt != self.SAVE_FORMAT:
+            raise ValueError(f"incompatible game save format {fmt!r} "
+                             f"(this build reads {self.SAVE_FORMAT})")
+        from simcore import SimCore
+        self.core = SimCore.from_save(blob["sim"])     # contract-level restore
+        self.cfg = self.core.cfg
+        self._restore_session(blob["session"])
+        self.stamina_used = 0                          # transients reset to day-start
+        self.queued = []
+        self.pending_sell = {}
+        self._boundary = {"sim": blob["sim"], "session": blob["session"]}
+        self.snap = self.core.begin_turn()
+
+    def save_to_file(self, path: str | None = None) -> str:
+        import json
+        path = path or self.DEFAULT_SAVE_PATH
+        with open(path, "w") as f:
+            json.dump(self.save(), f)
+        return path
+
+    def load_from_file(self, path: str | None = None) -> bool:
+        """Load if the save file exists; return False (touching nothing) if not."""
+        import json, os
+        path = path or self.DEFAULT_SAVE_PATH
+        if not os.path.exists(path):
+            return False
+        with open(path) as f:
+            self.load(json.load(f))
+        return True
 
     # ------------------------------------------------------------------- guards
     def can_act(self) -> bool:
@@ -152,7 +316,7 @@ class GameSession:
         if not self.can_gather():
             return False
         self.core.submit(C.Gather(r)); self.stamina_used += 1
-        self.queued.append(f"gather {r.value}")
+        self.queued.append(f"gather {_rv(r)}")
         return True
 
     def build_woodlot(self) -> bool:
@@ -183,11 +347,11 @@ class GameSession:
             if qty <= 0.5:
                 return False
             self.core.submit(C.Trade(r, "sell", qty, px * 0.95))
-            self.queued.append(f"sell {qty:.0f} {r.value}")
+            self.queued.append(f"sell {qty:.0f} {_rv(r)}")
             self.pending_sell[r] = self.pending_sell.get(r, 0.0) + qty
             return True
         self.core.submit(C.Trade(r, "buy", 3.0, px * 1.15))
-        self.queued.append(f"buy 3 {r.value}")
+        self.queued.append(f"buy 3 {_rv(r)}")
         return True
 
     def fast_forward(self) -> None:
@@ -213,7 +377,7 @@ class GameSession:
         elif self.core.done:
             self._end("")
         else:
-            self.snap = self.core.begin_turn()
+            self._enter_day()
             me = self.me()
             if me.food < 2.0:
                 self._log("Food is running low -- gather or buy food.", "food_low")
@@ -297,15 +461,15 @@ class GameSession:
             elif isinstance(ev, C.Settled):
                 if ev.side == "sell":
                     sold[ev.resource] = sold.get(ev.resource, 0.0) + ev.qty
-                    self._log(f"Sold {ev.qty:.0f} {ev.resource.value} for {ev.value:.0f}g "
+                    self._log(f"Sold {ev.qty:.0f} {_rv(ev.resource)} for {ev.value:.0f}g "
                               f"(@ {ev.value/max(ev.qty,1e-6):.1f}).", "sold")
                 else:
-                    self._log(f"Bought {ev.qty:.0f} {ev.resource.value} for {ev.value:.0f}g.", "bought")
+                    self._log(f"Bought {ev.qty:.0f} {_rv(ev.resource)} for {ev.value:.0f}g.", "bought")
         # tell the player when a sell order did NOT clear (and why)
         for r, req in self.pending_sell.items():
             unsold = req - sold.get(r, 0.0)
             if unsold > 0.5:
-                self._log(f"{unsold:.0f} {r.value} didn't sell -- no buyers (it isn't scarce now).", "unsold")
+                self._log(f"{unsold:.0f} {_rv(r)} didn't sell -- no buyers (it isn't scarce now).", "unsold")
         self.starving = self.starving + 1 if starved else 0
         if starved:
             self._log(f"You have no food -- STARVING ({self.starving}/{self.STARVE_DAYS} days).", "starving")

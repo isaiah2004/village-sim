@@ -55,11 +55,30 @@ UE5 client — is **just another View** over the same `GameSession`, changing no
 in the rules or the sim. `view_text.py` (a terminal body sharing nothing with
 `game.py`) is the living proof of this.
 
+## Worlds are data (scenarios)
+
+The world's axes — resources, the cyclical driver, needs, the market model, the
+population, and capital goods — are **data**, selected by a named `Scenario`. The
+sim and the contribution index read those axes generically, so **adding a whole new
+world is one data entry: a name and values, zero new logic**. Four MVP worlds ship
+(`frostpine`, `tidewater`, `guildhall`, `emberforge`); `demo_scenarios.py` is a thin
+body that drives *any* of them through the contract alone.
+
+```bash
+python demo_scenarios.py                 # run every registered scenario headlessly
+python demo_scenarios.py emberforge --build   # a scripted capital-founding player
+```
+
+See **[SCENARIOS.md](SCENARIOS.md)** for the axes and a three-step add-a-world guide.
+`test_modularity.py` enforces the claim; `regression.py` pins every scenario's
+numbers byte-for-byte.
+
 ## File map
 
 | File | Role |
 |---|---|
-| `contract.py` | **Frozen v1.1** engine-agnostic interface: Intents / Events / Snapshot. The "wall" — every action passes through it. |
+| `contract.py` | **Frozen v1.5** (additive-only) engine-agnostic interface: Intents / Events / Snapshot. The "wall" — every action passes through it. Snapshot/AgentView carry generic resource-keyed reads so a body renders any world. |
+| `scenario.py` | **Scenarios as data**: `ResourceSpec`/`Driver`/`NeedSpec`/`MarketSpec`/`PopSpec`/`CapitalSpec` + the registry + `make_config`/`make_world`. |
 | `simcore.py` | `SimCore` facade over the reference world; the only thing a body touches. Plus `serialize`/`load`. |
 | `world.py` | The simulation clock/orchestrator (production → market → consumption → belief → surveillance). |
 | `agents.py` | Agents (Villager, Dependent, MarketMaker, Merchant, Player) + player strategies + spawn specs. |
@@ -74,14 +93,18 @@ in the rules or the sim. `view_text.py` (a terminal body sharing nothing with
 | `view_text.py` | Terminal **View** — a second body proving the skin is swappable. |
 | `persistence.py` | Full-fidelity JSON save/load for `SimCore`. |
 | `check.py` | The foundation gate: regression + conformance + persistence + unit tests. |
-| `regression.py` + `golden.json` | Golden-master safety net (9 scenarios, 126 metrics). |
-| `test_*.py` | Behavioural + contract + persistence tests. |
-| `main.py`, `demo_knowledge.py` | Headless scenario runners the golden master mirrors. |
+| `regression.py` + `golden.json` | Golden-master safety net (13 scenarios, 183 metrics — frostpine's rows byte-identical). |
+| `test_*.py` | Behavioural + contract + persistence + `test_modularity.py` (the data-driven-world proof). |
+| `main.py`, `demo_knowledge.py` | Headless frostpine runners the golden master mirrors. |
+| `demo_scenarios.py` | A thin, scenario-agnostic body driving any world through the contract. |
 | `*.html`, `plot_*.png`, `sim_data.json` | Published demo pages and plots (project artifacts). |
 
 ## Status
 
 **Phase 1 (lock the model + contract) is finalized.** The contract is frozen,
-save/load is implemented, and the golden master is locked. **Phase 2 (prove it's
-fun) is in progress** — the 2D fun-test exists and the contribution loop is made
-legible. See **[AGENTS.md](AGENTS.md)** for the full roadmap and next steps.
+save/load is implemented, and the golden master is locked. **The world model is now
+fully data-driven** — Layer 2 (the index) is universal, scenarios are data, four MVP
+worlds run, the Layer 3 intervention slice is scenario-agnostic, and everything is
+drivable through the contract by any View/UE5. **Phase 2 (prove it's fun)** continues
+on the frostpine game. See **[AGENTS.md](AGENTS.md)** for the roadmap and
+**[SCENARIOS.md](SCENARIOS.md)** for adding worlds.

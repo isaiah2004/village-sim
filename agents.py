@@ -19,6 +19,21 @@ from dataclasses import dataclass, field
 from config import Config, Resource, Season
 
 
+def _consumables(ctx: "Ctx"):
+    """The consumable resource ids this scenario tracks (frostpine: wood, food)."""
+    return ctx.consumables or (Resource.WOOD, Resource.FOOD)
+
+
+def _scenario_ids(cfg):
+    """(all resource ids, consumable ids) for cfg's scenario, or the frostpine
+    enum defaults if no scenario is attached (agents built outside a World)."""
+    sc = getattr(cfg, "scenario", None)
+    if sc is None:
+        return ([Resource.WOOD, Resource.FOOD, Resource.TOOL, Resource.WOODLOT],
+                [Resource.WOOD, Resource.FOOD])
+    return (list(sc.resource_ids()), list(sc.consumable_ids()))
+
+
 # ----- decisions the agent hands back to the World to execute -----
 @dataclass
 class GatherAction:
@@ -37,12 +52,51 @@ class BuildWoodlotAction:
 
 
 @dataclass
+class InterventionAction:
+    """Perform a pre-authored world-change from the intervention library (Layer 3),
+    identified by key. Preconditions and effects live in interventions.py; the
+    world applies it deterministically. Player-driven only."""
+    key: str
+
+
+@dataclass
+class AcceptDealAction:
+    """Conclude a negotiated loan-financed deal (Layer 3). The world hard-gates it,
+    records the loan, credits the principal, and applies the intervention effect.
+    Player-driven only."""
+    key: str
+    principal: float
+    interest: float
+    term_days: int
+    merchant_id: str
+
+
+@dataclass
 class Asset:
     """An owned, persistent capital good (not a consumable holding)."""
     kind: str            # "woodlot"
     lot_id: int          # its lineage lot, so realized-effect credit can flow through it
     built_tick: int
     level: int = 1       # upgradable; output and upkeep scale with level
+
+
+@dataclass
+class Loan:
+    """A negotiated debt: the merchant lent `principal` at `interest` (total
+    fraction over the term); the borrower repays `balance` in equal daily
+    installments over `term_days`. Deterministic sim state -- the LLM merchant
+    only negotiates the numbers; the sim enforces repayment and default."""
+    lender_id: str
+    principal: float
+    interest: float          # total interest as a fraction of principal
+    term_days: int
+    struck_day: int
+    balance: float           # remaining to repay; starts at principal*(1+interest)
+    defaulted: bool = False
+
+    @property
+    def per_day(self) -> float:
+        return round(self.principal * (1.0 + self.interest) / max(self.term_days, 1), 6)
 
 
 @dataclass
@@ -60,9 +114,15 @@ class Ctx:
     cfg: Config
     day: int
     season: Season
-    wood_need: float                    # current-season wood consumption / day
-    food_need: float
+    wood_need: float                    # compat alias: needs["wood"] (frostpine)
+    food_need: float                    # compat alias: needs["food"] (frostpine)
     ref_price: dict                     # Resource -> reference market price
+    # DESIGN.md: resources are data. `needs` is the per-agent daily consumption of
+    # each consumable this day (base_consume x the active driver's phase); the agent
+    # economic loops iterate `consumables`, so they work for any scenario's goods.
+    needs: dict = field(default_factory=dict)         # resource id -> units/day
+    consumables: tuple = ()                            # consumable resource ids
+    yield_mult: dict = field(default_factory=dict)     # resource id -> today's gather-yield multiplier (driver)
     # Player-only privileged channels from the AIC. Villagers see empty dicts.
     bounty: dict = field(default_factory=dict)        # internal payout rate (used by strategies, not shown in UI)
     fair_price: dict = field(default_factory=dict)    # AIC's fair-value estimate (shown to player as guidance)
@@ -78,25 +138,31 @@ class Agent:
         self.cfg = cfg
         self.rng = rng
         self.money = cfg.start_money
+        # Resource buckets come from the scenario (DESIGN.md), so any world's goods
+        # get holdings/skill/belief slots. The consumable order is stable, so the
+        # per-consumable skill RNG draws happen in the same order -> byte-identical
+        # for frostpine (wood then food).
+        rids, cons = _scenario_ids(cfg)
         # holdings[resource] = deque of [lot_id, qty_remaining], oldest first
-        self.holdings: dict[Resource, deque] = {r: deque() for r in Resource}
+        self.holdings: dict = {r: deque() for r in rids}
         self.stamina = cfg.stamina_per_day
-        self.skill = {
-            Resource.WOOD: rng.uniform(0.85, 1.2),
-            Resource.FOOD: rng.uniform(0.85, 1.2),
-        }
+        self.skill = {r: rng.uniform(0.85, 1.2) for r in cons}
         self.tool_durability_left = 0
         self.assets: list = []   # owned capital goods (woodlots, …)
+        self.loans: list = []    # outstanding debts (Loan); empty unless loans_enabled
         # ---- belief: perceived scarcity per resource (0..1ish). Drives panic-
         # buying / reserve targets. Updated from observed events, not the AIC.
-        self.perceived_scarcity: dict[Resource, float] = {r: 0.0 for r in Resource}
+        self.perceived_scarcity: dict = {r: 0.0 for r in rids}
         # bookkeeping
-        self.unmet_need = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
+        self.unmet_need = {r: 0.0 for r in cons}
         self.bonus_earned = 0.0
 
     # ---------- inventory helpers ----------
     def qty(self, r: Resource) -> float:
-        return sum(item[1] for item in self.holdings[r])
+        # A resource the agent has no slot for is simply held in zero quantity;
+        # tolerant lookup lets contract views ask about goods absent in a scenario.
+        dq = self.holdings.get(r)
+        return sum(item[1] for item in dq) if dq else 0.0
 
     def add_holding(self, lot_id: int, r: Resource, qty: float) -> None:
         self.holdings[r].append([lot_id, qty])
@@ -122,12 +188,15 @@ class Agent:
         return self.tool_durability_left > 0
 
     # ---------- economic valuation ----------
-    def daily_need(self, r: Resource, ctx: Ctx) -> float:
-        if r == Resource.WOOD:
+    def daily_need(self, r, ctx: Ctx) -> float:
+        if ctx.needs:
+            return ctx.needs.get(r, 0.0)
+        if r == Resource.WOOD:                 # legacy fallback (no scenario needs)
             return ctx.wood_need
         if r == Resource.FOOD:
             return ctx.food_need
         return 0.0
+
 
     def fear(self, r: Resource) -> float:
         """Clamped perceived-scarcity belief (0..1) for resource r."""
@@ -154,14 +223,18 @@ class Agent:
         return base * (1.0 + (self.cfg.fear_price_mult - 1.0) * self.fear(r))
 
     def expected_gather_yield(self, r: Resource, ctx: Ctx) -> float:
-        y = self.cfg.base_yield[r] * self.cfg.season_yield_mult[ctx.season] * self.skill[r]
+        if ctx.yield_mult:
+            mult = ctx.yield_mult.get(r, 1.0)
+        else:
+            mult = self.cfg.season_yield_mult[ctx.season]
+        y = self.cfg.base_yield[r] * mult * self.skill[r]
         if self.has_tool:
             y *= (1.0 + self.cfg.tool_yield_bonus)
         return y
 
     # ---------- belief update ----------
     def update_belief(self, own_unmet: dict, village_unmet: dict,
-                      rumour: dict | None = None) -> None:
+                      rumour: dict | None = None, consumables: tuple = ()) -> None:
         """
         Fear rises with felt shortage (own > witnessed) and decays otherwise.
 
@@ -173,7 +246,7 @@ class Agent:
         that actually had to travel, not an oracle.
         """
         rumour = rumour or {}
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in (consumables or (Resource.WOOD, Resource.FOOD)):
             personal = own_unmet.get(r, 0.0)
             witness = max(0.0, village_unmet.get(r, 0.0) - personal)
             delta = (self.cfg.fear_personal_gain * personal
@@ -187,7 +260,7 @@ class Agent:
     def consume_daily(self, ctx: Ctx):
         """Burn the day's food + wood. Returns dict resource -> (consumed_lots, shortfall)."""
         result = {}
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             need = self.daily_need(r, ctx)
             consumed = self.take(r, need)
             got = sum(q for _, q in consumed)
@@ -200,7 +273,10 @@ class Agent:
     def decide_actions(self, ctx: Ctx) -> list:
         actions = []
         stamina = self.stamina
-        if (not self.has_tool
+        # Tool-crafting is a frostpine capital mechanic (a tool crafted from wood).
+        # It only applies where the scenario actually has both a tool and wood.
+        tools_available = Resource.TOOL in self.holdings and Resource.WOOD in self.holdings
+        if (tools_available and not self.has_tool
                 and self.qty(Resource.WOOD) >= self.target_reserve(Resource.WOOD, ctx) + self.cfg.tool_wood_cost
                 and stamina >= self.cfg.effort_per_gather):
             actions.append(CraftToolAction())
@@ -225,14 +301,20 @@ class Agent:
         only if it clears effort cost at CURRENT market prices. They DO NOT see
         the AIC's bounty -- they're not nudged by it.
         """
+        # only gather goods this world actually lets you gather (base_yield > 0);
+        # a "bought-in" good like tidewater's grain has base_yield 0 and is never
+        # gathered. frostpine's wood and food are both gatherable -> unchanged.
+        gatherable = [r for r in _consumables(ctx) if self.cfg.base_yield.get(r, 0.0) > 0]
+        if not gatherable:
+            return None
         cover = {}
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in gatherable:
             cover[r] = self._projected_reserve(r) / max(self.daily_need(r, ctx), 1e-6)
         worst = min(cover, key=lambda r: cover[r])
         if cover[worst] < self.cfg.reserve_buffer_days:
             return worst
         best, best_profit = None, 0.0
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in gatherable:
             if self._projected_reserve(r) >= self.target_reserve(r, ctx) * self.cfg.surplus_gather_cap:
                 continue
             unit_value = ctx.ref_price.get(r, 0.0)   # NO bounty term for villagers
@@ -244,7 +326,7 @@ class Agent:
     # ---------- trading intents ----------
     def make_orders(self, ctx: Ctx) -> list[Order]:
         orders: list[Order] = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             reserve = self.qty(r)
             target = self.target_reserve(r, ctx)
             if reserve < target:
@@ -277,22 +359,29 @@ class Dependent(Villager):
     """
     is_dependent = True
 
-    def __init__(self, agent_id, cfg, rng, money_mult: float = 1.2, **kwargs):
+    def __init__(self, agent_id, cfg, rng, money_mult: float = 1.2, produces="food", **kwargs):
         super().__init__(agent_id, cfg, rng)
         self.money = cfg.start_money * money_mult
+        # the ONE good this dependent can make (data): frostpine gardeners produce
+        # food but cannot cut wood; a tidewater net-mender produces nothing
+        # (produces=None) and must buy the fish it needs.
+        self.produces = produces
 
     def decide_actions(self, ctx):
-        # garden food only (never wood); a little surplus to sell for wood money
+        # produce only `self.produces` (never the crisis good); buy the rest.
+        if self.produces is None:
+            return []
+        r = self.produces
         actions, stamina, pending = [], self.stamina, 0.0
         while stamina >= self.cfg.effort_per_gather:
-            if self.qty(Resource.FOOD) + pending >= self.target_reserve(Resource.FOOD, ctx) * 1.5:
+            if self.qty(r) + pending >= self.target_reserve(r, ctx) * 1.5:
                 break
-            actions.append(GatherAction(Resource.FOOD))
-            pending += self.expected_gather_yield(Resource.FOOD, ctx)
+            actions.append(GatherAction(r))
+            pending += self.expected_gather_yield(r, ctx)
             stamina -= self.cfg.effort_per_gather
         return actions
 
-    # make_orders is inherited: buys wood to cover reserves, sells food surplus.
+    # make_orders is inherited: buys the crisis good to cover reserves, sells surplus.
 
 
 class MarketMaker(Agent):
@@ -340,14 +429,14 @@ class MarketMaker(Agent):
         return []
 
     def consume_daily(self, ctx):
-        return {Resource.WOOD: ([], 0.0), Resource.FOOD: ([], 0.0)}
+        return {r: ([], 0.0) for r in _consumables(ctx)}
 
     def update_belief(self, *args, **kwargs):
         pass
 
     def make_orders(self, ctx) -> list[Order]:
         orders = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             ref = ctx.ref_price.get(r, self.cfg.intrinsic_value[r])
             intrinsic = self.cfg.intrinsic_value[r]
             floor = intrinsic * self.cfg.price_floor_mult
@@ -392,7 +481,7 @@ class Merchant(Agent):
 
     def make_orders(self, ctx) -> list[Order]:
         orders = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             ref = ctx.ref_price.get(r, self.cfg.intrinsic_value[r])
             stock = self.qty(r)
             target = self.target_reserve(r, ctx)
@@ -481,7 +570,7 @@ class ResponsiveStrategy(Strategy):
 
     def make_orders(self, ag, ctx):
         orders = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             reserve, target = ag.qty(r), ag.target_reserve(r, ctx)
             if reserve > target:
                 ask = max(ag.cfg.intrinsic_value[r] * 0.7, ag.marginal_value(r, ctx, reserve))
@@ -574,7 +663,14 @@ class Player(Agent):
 
     def __init__(self, agent_id: str, cfg: Config, rng, strategy="responsive"):
         super().__init__(agent_id, cfg, rng)
-        self.skill = {Resource.WOOD: 1.3, Resource.FOOD: 1.2}
+        # The player is a somewhat-better-than-average producer of every
+        # consumable. frostpine's historical values (wood 1.3, food 1.2) are
+        # preserved exactly; any other scenario's goods get a flat competent
+        # skill, so this is generic -- no per-scenario branching.
+        _, cons = _scenario_ids(cfg)
+        _historical = {"wood": 1.3, "food": 1.2}
+        self.skill = {r: _historical.get(r.value if hasattr(r, "value") else r, 1.25)
+                      for r in cons}
         # accept either a registry name or an actual Strategy instance
         if isinstance(strategy, str):
             strat = STRATEGIES.get(strategy)
@@ -611,3 +707,16 @@ class SpawnSpec:
     def make_id(self, i: int) -> str:
         prefix = self.id_prefix or self.cls.__name__[:3].lower()
         return f"{prefix}{i:02d}"
+
+
+# ---------------------------------------------------------------------
+# Archetype registry: scenario population is DATA (a PopSpec names an archetype
+# by string). This maps those names to agent classes so scenario.build_population
+# can turn PopSpec rows into SpawnSpecs with no per-scenario code.
+# ---------------------------------------------------------------------
+ARCHETYPES: dict = {
+    "villager": Villager,
+    "dependent": Dependent,
+    "market_maker": MarketMaker,
+    "merchant": Merchant,
+}

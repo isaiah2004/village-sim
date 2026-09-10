@@ -57,6 +57,27 @@ def _run_economy(cfg: Config, strategy, accountant_enabled, population):
     return world.metrics
 
 
+def _need_scenarios():
+    """Scenarios that exercise the data-defined need registry (DESIGN.md Layer 2).
+    Each is a (name, strategy, cfg-mutator) triple; the mutator flips only config
+    DATA -- no code path is special-cased. These prove the index prices/rewards a
+    SECOND need (food) through the identical pipeline. Additive: they add new
+    golden rows and leave the original 9 scenarios untouched."""
+    def food_need_blight(cfg: Config) -> None:
+        cfg.food_blight_enabled = True      # make food genuinely scarce (a real problem)
+        cfg.reward_food_need = True         # register food as a REWARDED need (pure data)
+        cfg.reward_at_fair_value = True     # price the met need at fair value (the index's heart)
+    return [("FOOD_NEED_BLIGHT", "idle", food_need_blight)]
+
+
+def _run_need(cfg: Config, strategy, mutate):
+    cfg = copy.deepcopy(cfg)
+    mutate(cfg)
+    world = World(cfg, player_strategy=strategy)
+    world.run()
+    return world.metrics
+
+
 def _run_propagation(cfg: Config, strategy, inject):
     from knowledge import Claim  # local import: only needed for these scenarios
     cfg = copy.deepcopy(cfg)
@@ -84,6 +105,22 @@ def _propagation_scenarios():
     ]
 
 
+def _named_scenarios():
+    """The data-defined world archetypes (DESIGN.md "scenarios are DATA"). Each
+    runs headlessly straight from its scenario name -- no config surgery. Additive:
+    they add new golden rows (their own resource/phase-keyed metrics) and leave
+    frostpine's rows untouched. This anchors tidewater/guildhall/emberforge so any
+    future refactor that changes their numbers is caught too."""
+    return ["tidewater", "guildhall", "emberforge"]
+
+
+def _run_named(name: str):
+    import scenario as _scen
+    world = _scen.make_world(name, player_strategy="idle")
+    world.run()
+    return world.metrics
+
+
 def collect() -> dict:
     """Run every scenario and return {name: summary_dict} with rounded floats."""
     cfg = Config()
@@ -92,6 +129,10 @@ def collect() -> dict:
         out[name] = _round(_run_economy(cfg, strat, acct, pop).summary())
     for name, strat, inject in _propagation_scenarios():
         out[name] = _round(_run_propagation(cfg, strat, inject).summary())
+    for name, strat, mutate in _need_scenarios():
+        out[name] = _round(_run_need(cfg, strat, mutate).summary())
+    for name in _named_scenarios():
+        out[f"SCENARIO_{name.upper()}"] = _round(_run_named(name).summary())
     return out
 
 

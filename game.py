@@ -69,6 +69,7 @@ class Game:
         self.mono_sm = pygame.font.SysFont("consolas,monospace", 12)
         self.s = GameSession()          # the rules; this View only reads/drives it
         self.intro = True               # a View-only splash before the first turn
+        self.toast = ("", 0)            # (text, frames-left) transient status line
         self._relayout()
 
     # ---------------- convenience passthroughs to the session ----------------
@@ -122,7 +123,20 @@ class Game:
         elif key == pygame.K_e:    s.build_woodlot()
         elif key == pygame.K_d:    s.warn()
         elif key == pygame.K_f:    s.fast_forward()
+        elif key == pygame.K_s:    self._save()
+        elif key == pygame.K_l:    self._load()
         elif key == pygame.K_RETURN: s.end_day()
+
+    def _save(self):
+        path = self.s.save_to_file()
+        self._toast(f"Saved  ·  day {self.s.day}")
+
+    def _load(self):
+        self._toast(f"Loaded  ·  day {self.s.day}" if self.s.load_from_file()
+                    else "No save found")
+
+    def _toast(self, text):
+        self.toast = (text, 150)        # ~2.5s at 60fps
 
     # ---------------- loop ----------------
     def run(self):
@@ -156,7 +170,20 @@ class Game:
         self._draw_actionbar(); self._draw_log()
         if self.intro: self._overlay_intro()
         elif self.s.phase == "ended": self._overlay_over()
+        self._draw_toast()
         pygame.display.flip()
+
+    def _draw_toast(self):
+        text, frames = self.toast
+        if frames <= 0 or not text:
+            return
+        self.toast = (text, frames - 1)
+        pad = 10
+        w = self.f_sm.size(text)[0] + pad * 2
+        box = pygame.Rect((self.W - w) // 2, 74, w, 30)
+        pygame.draw.rect(self.screen, SURF2, box, border_radius=8)
+        pygame.draw.rect(self.screen, GREEN, box, width=1, border_radius=8)
+        self._text(text, self.f_sm, INK, box.centerx, box.y + 7, center=True)
 
     def _text(self, s, font, color, x, y, center=False, right=False):
         surf = font.render(s, True, color); r = surf.get_rect()
@@ -214,10 +241,22 @@ class Game:
                        self.f_xs, BELIEF, v.right - 16, v.y + 12, right=True)
         cx, cy = v.centerx, v.centery + 6; Rr = min(v.w, v.h) * 0.37
         others = [a for a in self.s.snap.agents if a.kind != "market_maker" and not a.is_player]
+        spots = []                       # (agent, x, y, rad) for hover hit-testing
         for i, a in enumerate(others):
             ang = (i / max(len(others), 1)) * math.tau - math.pi / 2
-            self._draw_agent(a, cx + math.cos(ang) * Rr, cy + math.sin(ang) * Rr)
-        self._draw_agent(self.me(), cx, cy)
+            spots.append(self._draw_agent(a, cx + math.cos(ang) * Rr, cy + math.sin(ang) * Rr))
+        spots.append(self._draw_agent(self.me(), cx, cy))
+        # hover a villager to hear their mind: the bubble text is that agent's
+        # real belief, rendered by the session through the SimCore contract.
+        if not self.intro and self.s.phase == "playing":
+            mx, my = pygame.mouse.get_pos()
+            for a, ax, ay, rad in spots:
+                if a.is_player:
+                    continue
+                if (mx - ax) ** 2 + (my - ay) ** 2 <= (rad + 6) ** 2:
+                    line, tag = self.s.villager_line(a.id)
+                    self._draw_speech(ax, ay - rad - 6, line, TAG_COLORS.get(tag, INK), v)
+                    break
 
     def _draw_agent(self, a, x, y):
         cold = a.id in self.s.cold_today
@@ -232,6 +271,34 @@ class Game:
         if a.is_player:
             self._text("YOU", self.mono_sm, BG, int(x), int(y) - 8, center=True)
             self._text(f"{a.wood:.0f}w {a.food:.0f}f", self.mono_sm, INK, int(x), int(y) + 30, center=True)
+        return a, int(x), int(y), rad
+
+    def _wrap(self, text, font, maxw):
+        words, lines, cur = text.split(), [], ""
+        for wd in words:
+            trial = (cur + " " + wd).strip()
+            if font.size(trial)[0] <= maxw or not cur:
+                cur = trial
+            else:
+                lines.append(cur); cur = wd
+        if cur:
+            lines.append(cur)
+        return lines
+
+    def _draw_speech(self, ax, ay, text, color, bounds):
+        """A small speech bubble above an agent, clamped inside the village panel."""
+        font = self.f_xs; maxw = min(230, bounds.w - 24)
+        lines = self._wrap(text, font, maxw)
+        lh = font.get_height() + 2
+        w = max(font.size(ln)[0] for ln in lines) + 16
+        h = lh * len(lines) + 12
+        x = int(max(bounds.x + 6, min(ax - w // 2, bounds.right - w - 6)))
+        y = int(max(bounds.y + 6, ay - h - 6))
+        box = pygame.Rect(x, y, w, h)
+        pygame.draw.rect(self.screen, SURF2, box, border_radius=8)
+        pygame.draw.rect(self.screen, color, box, width=1, border_radius=8)
+        for i, ln in enumerate(lines):
+            self._text(ln, font, INK, x + 8, y + 6 + i * lh)
 
     def _draw_side(self):
         me = self.me(); acc = self.lay["acc"]; self._panel(acc)
@@ -241,7 +308,7 @@ class Game:
         step = int((acc.h - 60) / 2)
         for r in (Resource.WOOD, Resource.FOOD):
             m = self.market(r)
-            self._text(r.value.upper(), self.f_h2, INK, acc.x + 14, y)
+            self._text((r.value if hasattr(r,'value') else r).upper(), self.f_h2, INK, acc.x + 14, y)
             self._text(f"market {m.ref_price:5.1f}", self.mono, MUTE, acc.x + 14, y + 26)
             self._text(f"fair   {m.fair_price:5.1f}", self.mono, EMBER, acc.x + 14, y + 44)
             if m.ref_price < m.fair_price * 0.85:
@@ -287,6 +354,8 @@ class Game:
         q = ", ".join(self.s.queued) if self.s.queued else "nothing yet"
         self._text("PLANNED: " + q, self.f_xs, MUTE if not self.s.queued else INK,
                    self.lay["bar"].x + 2, self.lay["bar"].y + 4)
+        self._text("S save · L load", self.f_xs, MUTE,
+                   self.lay["bar"].right - 2, self.lay["bar"].y + 4, right=True)
 
     def _clip(self, s, font, maxw):
         if font.size(s)[0] <= maxw:
@@ -323,8 +392,8 @@ class Game:
             ("or spend a day carrying word of winter so the village prepares. Your", INK),
             ("score is the worth of the need you meet -- most for those who can't cut wood.", INK),
             ("", INK),
-            ("Q wood   W food   E woodlot   D warn   F fast-forward   Enter end day", STEEL),
-            ("Sell / Buy in the Accountant panel.", STEEL),
+            ("Q wood  W food  E woodlot  D warn  F fast-forward  Enter end day", STEEL),
+            ("Sell / Buy in the Accountant panel.  S save · L load · hover a villager to hear them.", STEEL),
         ]):
             self._text(ln, self.f, c, cx, 124 + i * 26, center=True)
         self._text("click or press any key to begin", self.mono, MUTE, cx, 124 + 13 * 26, center=True)

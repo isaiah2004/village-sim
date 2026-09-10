@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 
 from config import Config, Resource, Season
 from lineage import LineageGraph
+from needs import Need, build_registry
 
 
 @dataclass
@@ -38,6 +39,10 @@ class AccountantState:
     # they compare it to the actual market price to spot opportunities.
     fair_price: dict = field(default_factory=dict)
     predicted_deficit: dict = field(default_factory=dict)
+    # The forecast scarcity ratio (0..1) per resource -- the same signal that sets
+    # fair value. Exposed so Layer 1's problem model can read a scarcity problem's
+    # severity from the index's OWN measure. Observational; recomputed each day.
+    scarcity: dict = field(default_factory=dict)
     paid_today: float = 0.0
     total_paid: float = 0.0
     total_penalty: float = 0.0
@@ -51,14 +56,20 @@ class AccountantState:
 class Accountant:
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        # The registry of needs the index prices/rewards -- DATA, assembled from
+        # config. All pricing and payout below is driven by this list, with no
+        # per-resource branching, so a new need is a registry row, not new code.
+        self.needs: list[Need] = build_registry(cfg)
+        _sc = getattr(cfg, "scenario", None)
+        _rids = list(_sc.resource_ids()) if _sc is not None else list(Resource)
+        _cons = _sc.consumable_ids() if _sc is not None else [Resource.WOOD, Resource.FOOD]
         self.state = AccountantState(
-            bounty={r: 0.0 for r in Resource},
-            fair_price={r: cfg.intrinsic_value[r] for r in Resource},
+            bounty={r: 0.0 for r in _rids},
+            fair_price={r: cfg.intrinsic_value.get(r, 0.0) for r in _rids},
         )
         # rolling estimate of daily production per resource (observed only)
         self._prod_ema = {
-            Resource.WOOD: cfg.n_villagers * cfg.base_yield[Resource.WOOD] * 0.4,
-            Resource.FOOD: cfg.n_villagers * cfg.base_yield[Resource.FOOD] * 0.4,
+            r: cfg.n_villagers * cfg.base_yield.get(r, 0.0) * 0.4 for r in _cons
         }
         # surveillance: track wood SALES (cleared) and HONEST OFFERS (sell orders
         # at reasonable prices). A genuine supplier shows at least one; a hoarder
@@ -83,24 +94,31 @@ class Accountant:
         self.state.paid_today = 0.0
         self.state.contrib_events = []
         if not self.cfg.accountant_enabled:
-            self.state.bounty = {r: 0.0 for r in Resource}
-            self.state.fair_price = {r: self.cfg.intrinsic_value[r] for r in Resource}
+            _rids = list(self.cfg.scenario.resource_ids())
+            self.state.bounty = {r: 0.0 for r in _rids}
+            self.state.fair_price = {r: self.cfg.intrinsic_value.get(r, 0.0) for r in _rids}
+            self.state.scarcity = {r: 0.0 for r in _rids}
             return
         n = len(agents)
-        today_mult = self.cfg.season_yield_mult[self.cfg.season_for_day(day)]
-        for r in (Resource.WOOD, Resource.FOOD):
+        driver = self.cfg.scenario.driver           # yield modulation is data (DESIGN.md)
+        # Price every registered need uniformly -- the need carries its own
+        # requirement (severity source), so there is no per-resource logic here.
+        for need in self.needs:
+            r = need.resource
             reserves = sum(ag.qty(r) for ag in agents)
-            projected_consumption = self._projected_consumption(r, day, n)
+            projected_consumption = self._projected_consumption(need, day, n)
             # The AIC's view of capacity is pessimistic so it doesn't behave as
             # a perfect oracle: it under-estimates how much villagers can produce.
+            today_mult = driver.yield_mult(day, r)
             base_capacity = (self._prod_ema[r] / max(today_mult, 1e-6)) * self.cfg.accountant_pessimism
             projected_production = sum(
-                base_capacity * self.cfg.season_yield_mult[self.cfg.season_for_day(d)]
+                base_capacity * driver.yield_mult(d, r)
                 for d in range(day, day + self.cfg.accountant_horizon)
             )
             deficit = projected_consumption - (reserves + projected_production)
             ratio = max(0.0, min(1.0, deficit / max(projected_consumption, 1e-6)))
             self.state.predicted_deficit[r] = deficit
+            self.state.scarcity[r] = ratio       # Layer 1 reads this as problem severity
             self.state.bounty[r] = round(self.cfg.accountant_bounty_max * ratio, 3)
             # Fair value: intrinsic, lifted by scarcity. Player compares this
             # to the actual market price to spot under/over-valued goods.
@@ -110,15 +128,13 @@ class Accountant:
                 self.cfg.intrinsic_value[r] * (1.0 + 2.0 * ratio), 2
             )
 
-    def _projected_consumption(self, resource: Resource, day: int, n_agents: int) -> float:
-        total = 0.0
-        for d in range(day, day + self.cfg.accountant_horizon):
-            season = self.cfg.season_for_day(d)
-            if resource == Resource.WOOD:
-                total += n_agents * self.cfg.wood_per_day[season]
-            elif resource == Resource.FOOD:
-                total += n_agents * self.cfg.food_per_day
-        return total
+    def rewarded_needs(self) -> list[Need]:
+        """The needs whose met demand pays realized-effect contribution."""
+        return [need for need in self.needs if need.rewarded]
+
+    def _projected_consumption(self, need: Need, day: int, n_agents: int) -> float:
+        return sum(n_agents * need.daily_requirement(self.cfg, d)
+                   for d in range(day, day + self.cfg.accountant_horizon))
 
     # ---------- realized-effect payout ----------
     def reward_consumption(
@@ -174,8 +190,8 @@ class Accountant:
                 paid_here += amount
                 # record the felt "why": this producer met THIS consumer's need
                 self.state.contrib_events.append(
-                    (producer_id, consumer_id, consumer_kind, resource,
-                     amount, rate, season.value))
+                    (producer_id, consumer_id, consumer_kind, resource, amount, rate,
+                     season.value if hasattr(season, "value") else season))
 
         for lot_id, qty in consumed_lots:
             budget_left = self.cfg.accountant_budget_per_day - self.state.paid_today
@@ -203,12 +219,14 @@ class Accountant:
 
     def update_surveillance(self, agents: list, wood_price: float, unmet_wood: float = 0.0) -> None:
         """
-        Flag agents who hold a large wood stockpile while the village is in
-        scarcity AND who are not actively releasing it to the market. We look
-        at SALES (external release) rather than total stock change, so an
-        agent can't hide a hoard by burning some of it themselves.
+        Flag agents who hold a large stockpile of the crisis good while the
+        village is in scarcity AND who are not actively releasing it to the
+        market. We look at SALES (external release) rather than total stock
+        change, so an agent can't hide a hoard by burning some of it themselves.
+        The policed good is the scenario's primary resource (frostpine: wood).
         """
-        scarce = (wood_price > self.cfg.intrinsic_value[Resource.WOOD] * self.cfg.scarcity_price_mult
+        primary = self.cfg.scenario.primary_resource
+        scarce = (wood_price > self.cfg.intrinsic_value[primary] * self.cfg.scarcity_price_mult
                   or unmet_wood > 1e-6)
         self.state.hoard_flags = {}
         if not scarce:
@@ -217,7 +235,7 @@ class Accountant:
             # market makers are SUPPOSED to hold inventory -- don't flag them
             if ag.is_market_maker:
                 continue
-            stock = ag.qty(Resource.WOOD)
+            stock = ag.qty(primary)
             if stock <= self.cfg.hoard_stock_threshold:
                 continue
             sales = self._sales_ema.get(ag.id, 0.0)
@@ -233,10 +251,11 @@ class Accountant:
     def charge_holding_fees(self, agents: list) -> None:
         if not self.state.hoard_flags:
             return
+        primary = self.cfg.scenario.primary_resource
         for ag in agents:
             if ag.id not in self.state.hoard_flags:
                 continue
-            excess = ag.qty(Resource.WOOD) - self.cfg.hoard_stock_threshold
+            excess = ag.qty(primary) - self.cfg.hoard_stock_threshold
             if excess > 0:
                 fee = min(ag.money, excess * self.cfg.hoard_fee_rate)
                 ag.money -= fee

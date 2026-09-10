@@ -39,6 +39,13 @@ SEASON_ORDER = (Season.SPRING, Season.SUMMER, Season.AUTUMN, Season.WINTER)
 
 @dataclass
 class Config:
+    # ----- scenario (DESIGN.md "scenarios are DATA") -----
+    # The named world archetype this config was built from. `scenario.make_config`
+    # attaches the live Scenario object as `cfg.scenario` (a non-field attribute, so
+    # persistence serializes only the name and the world reattaches by name on load).
+    # Defaults to "frostpine" so a bare Config() is the historical baseline.
+    scenario_name: str = "frostpine"
+
     # ----- time -----
     season_length: int = 30          # days per season
     years: float = 2.0               # how long to run
@@ -144,10 +151,54 @@ class Config:
     dependent_stipend: float = 6.0    # money/day income for a dependent household
 
     capital_goods_enabled: bool = False
+
+    # ----- second crisis: summer food blight (Track A #2) -----
+    # A blight cuts food gather yield during its season, creating a SECOND scarce
+    # good and a competing crisis -- food in summer alongside wood in winter -- to
+    # test whether the loop stays interesting under two pressures rather than one
+    # wood/winter axis. OFF by default so the validated scenarios and golden stay
+    # byte-identical; a body or demo opts in. No special-casing is needed
+    # elsewhere: food is already first-class, so food fear, the FOOD market, and
+    # the AIC's fair-value channel all respond to the shortfall on their own.
+    food_blight_enabled: bool = False
+    food_blight_season: Season = Season.SUMMER  # the season the blight bites
+    # 0.12 = food gather at 12% of normal during the blight. Chosen so the crisis
+    # is real (idle villagers suffer ~40 summer food unmet, comparable to winter
+    # wood) yet fully rescuable by a player who stocks food and sells into it --
+    # mild cuts (>=0.2) just trigger elastic over-provisioning and no crisis.
+    food_blight_yield_mult: float = 0.12        # food gather yield during the blight
+
     woodlot_wood_cost: float = 8.0    # base wood cost; upgrading TO level L costs cost*L
     woodlot_wood_output: float = 1.5  # wood yielded per active day, PER LEVEL
     woodlot_upkeep_food: float = 0.5  # food its workers eat per day, PER LEVEL; no food -> it idles
     woodlot_max_level: int = 5
+
+    # ----- needs registry (Layer 2: the index prices ANY registered problem) -----
+    # "Need" is data, not code (see DESIGN.md). The accountant prices and attributes
+    # every registered need through one uniform pipeline -- no per-scenario logic.
+    # Wood is always a rewarded need (exactly as it has always behaved). Food is
+    # always registered and PRICED like wood; whether meeting it PAYS realized-effect
+    # contribution is opt-in below, default OFF so the golden master stays
+    # byte-identical. Turning it on is pure data: it proves the index is universal,
+    # not a food special-case.
+    reward_food_need: bool = False
+
+    # ----- interventions (Layer 3: how the player changes the world) -----
+    # A pre-authored library of world-changes (interventions.py), each gated by
+    # preconditions (capital, standing, enabling knowledge) and applying an
+    # authored effect to world-state. OFF by default so the validated scenarios
+    # never perform one and stay byte-identical; a body/demo opts in.
+    interventions_enabled: bool = False
+
+    # ----- loans / capital (Layer 3: financing an intervention via a merchant) -----
+    # A merchant may lend capital to fund an intervention; the borrower repays
+    # principal + interest over a term, and defaults if they can't. Deterministic
+    # sim state -- the LLM merchant only negotiates the numbers; the sim enforces
+    # them. OFF by default so validated scenarios never take a loan and stay
+    # byte-identical.
+    loans_enabled: bool = False
+    loan_max_interest: float = 0.6    # the sim clamps any negotiated interest to this
+    loan_max_term_days: int = 120     # and the term to this
 
     # ----- AI Accountant (observer, not planner) -----
     accountant_enabled: bool = True

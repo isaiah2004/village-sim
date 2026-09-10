@@ -31,6 +31,15 @@ STEPS = [
     ("facade parity",        [sys.executable, "test_simcore.py"]),
     ("capital goods",        [sys.executable, "test_capital.py"]),
     ("dependents",           [sys.executable, "test_dependents.py"]),
+    ("npc dialogue",         [sys.executable, "test_dialogue.py"]),
+    ("game save/load",       [sys.executable, "test_save_load_game.py"]),
+    ("food blight",          [sys.executable, "test_blight.py"]),
+    ("need registry",        [sys.executable, "test_needs.py"]),
+    ("problem board",        [sys.executable, "test_problems.py"]),
+    ("interventions",        [sys.executable, "test_interventions.py"]),
+    ("merchant negotiation", [sys.executable, "test_merchant.py"]),
+    ("loans",                [sys.executable, "test_loans.py"]),
+    ("modularity",           [sys.executable, "test_modularity.py"]),
 ]
 
 

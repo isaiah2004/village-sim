@@ -120,9 +120,113 @@ SimCore + contract  →  GameSession (session.py)  →  View (game.py, view_text
 
 ---
 
-## 4. What to build next (Phase 2 / "Track A — make the loop fun")
+## 4. What to build next
 
-**Already done this track:** contribution made *felt* (the news feed names *who*
+> **North star: [DESIGN.md](DESIGN.md).** Read it before choosing work. The index
+> is a **calculator, not the game**; never hardcode a scenario into it. The build
+> order is settled there: **(1) make Layer 2 (the index) universal — DONE below;
+> (2) Layer 1 world-model + the scenario system — DONE below; (3) Layer 3
+> interventions — first piece DONE below, now scenario-agnostic.** All three
+> layers work, the **world model is fully data-driven (scenarios are data)**, and
+> everything is drivable through the contract by any View/UE5. The frontier is
+> deepening each layer (esp. reputation-via-propagation and the LLM merchant at
+> the edge) and the frostpine game. Confirm scope with the owner before the next
+> big step.
+
+**The world model is now DATA — the scenario system.** A world's axes (resources,
+the cyclical driver, needs, the market model, population, capital goods) are a
+named `Scenario` value in `scenario.py`; the sim, the index, and the contract read
+them generically with **no per-scenario branching**. `make_config(name)` /
+`make_world(name)` build a fully-configured world from a name. Four MVP worlds
+ship — **frostpine** (the byte-identical baseline), **tidewater** (a driver +
+resources are data), **guildhall** (an adventurer town; the market model is a data
+axis: a guild support bid floors adventurers' pay ≈ 5.5×), **emberforge** (multi-resource
+structural scarcity relieved by a generic capital good). The capital-goods system,
+the player's skill, agent inventories, metrics, problems, and the `found_mill`
+intervention were all generalized off scenario data while keeping frostpine
+**byte-identical** (`regression.py` now 13 scenarios / 183 metrics, the new worlds
+captured **additively** — frostpine's 140 untouched). The contract went **v1.4 →
+v1.5** (additive): `AgentView.holdings`/`.fears` and `Snapshot.scenario`/
+`.primary_resource`/`.consumables`/`.village_unmet` are generic resource-keyed
+reads, so a body renders any world without knowing wood/food. `demo_scenarios.py`
+is a thin scenario-agnostic body proving it; `test_modularity.py` adds a throwaway
+world ("saltmarsh") and proves a new world is **one data entry, zero new logic**.
+See **[SCENARIOS.md](SCENARIOS.md)** for the axes and the add-a-world guide.
+
+**Layer 2 is now universal — the need registry.** "Need" is DATA (`needs.py`): a
+`Need` = an identity, the resource whose consumption meets it (the lineage
+attribution hook), a per-agent seasonal requirement (severity source), and whether
+meeting it is rewarded. The accountant prices and pays *every* registered need
+through one pipeline with **no per-resource code** (`accountant.start_day` /
+`rewarded_needs` / `reward_consumption`; `world._consumption_phase`). Wood is
+re-registered exactly as before — the **9 original golden scenarios are
+byte-identical** (`python regression.py`, no capture). Food is registered as pure
+data; flipping `cfg.reward_food_need` routes food through the identical
+reward+lineage pipeline (proven in `test_needs.py`, and locked as the additive
+`FOOD_NEED_BLIGHT` golden scenario — new rows only, existing 126 untouched). *This
+ended scenario-creep: adding a need is a registry row, never new index logic.*
+
+**Layer 1 is now data — the world-state problem board (first piece).** Problems are
+DATA (`problems.py`): a `Problem` = key, TYPE (kind), LOCATION, subject; its
+**severity (0..1) is read from world-state each day**, so the sim tracks it as the
+world moves. Two authored TYPES ship — `scarcity` (reuses the index's own scarcity
+signal) and `capital_gap` (a non-consumption "missing infrastructure" problem, the
+mill shape). The board is observational (`problems.refresh` in `world.begin_day`,
+mutates nothing → the **140 golden metrics stay byte-identical**, no capture) and
+exposed additively on the contract (`ProblemView` + `Snapshot.problems`, **v1.1 →
+v1.2**, plus `SimCore.problems()`). `demo_problems.py` shows it over a year;
+`test_problems.py` proves typed/located/data, world-tracked severity, that building
+a woodlot lowers the capital gap, and that a scarcity problem's severity *is* the
+index's own signal (one definition shared by Layers 1 and 2). This is DESIGN.md
+question 2 ("what is the problem?") made first-class.
+
+**Layer 1 — what remains (frontier):** more problem TYPES as needed; *located*
+problems beyond the single "village" (regions arrive with the Stage-2 knowledge
+layer); and richer severity readers.
+
+**Layer 3 is now data — the intervention library (first piece).** How the player
+CHANGES the world (`interventions.py`): an `Intervention` is data (key, title, the
+Layer-1 problem it `targets`, `capital_cost`, `min_standing`, enabling `requires`
+flags). A new `Perform(key)` contract intent (**v1.2 → v1.3**, additive, + an
+`InterventionPerformed` event) routes through `world._do_intervention` →
+`interventions.perform`, which checks preconditions and applies one authored,
+deterministic EFFECT to world-state — the ONLY place an intervention touches the
+sim. First rung: `found_mill` — a capital-financed woodlot that lowers the
+`capital_gap:wood` problem and whose wood the index credits to the founder. OFF by
+default (`cfg.interventions_enabled`) → the **140 golden metrics stay byte-identical**
+(no capture). `demo_interventions.py` shows the two-year loop (locked early → prove
+yourself → found & grow the mill → capital gap 1.00→0.00); `test_interventions.py`
+proves library-data, gated-off no-op, precondition gating, the world-change effect +
+index pricing, and determinism. Two seams are deliberate and documented in
+`interventions.py`: **standing** (`interventions.standing`, today = realized
+contribution; DESIGN.md's reputation = deeds propagated through `knowledge.py` plugs
+in here) and **negotiation** (`interventions.evaluate`, today a deterministic
+merchant; an LLM merchant replaces it AT THE EDGE — proposes/judges, sim validates,
+never mutates state).
+
+**Layer 3 — merchant negotiation + loans (MVP built).** You fund an intervention
+by negotiating a loan with a merchant. `merchant.py` (edge) has the `Merchant`
+protocol, a deterministic `ScriptedMerchant` (used everywhere in `check.py`), an
+edge-only fail-closed `LLMMerchant` (cheap `claude-haiku-4-5`, strict tool output,
+cached persona), and `negotiate()` capped at **3 rounds**. The settled terms enter
+the sim as the additive `AcceptDeal` intent (**contract v1.3 → v1.4**; +
+`DealResolved`/`LoanUpdated` events, `MerchantView`/`LoanView` reads,
+`SimCore.merchant_view`/`reputation`), where `world._do_accept_deal` is the HARD
+gate and `world._loan_phase` services a deterministic `Loan` (`cfg.loans_enabled`,
+default off → **140 golden metrics byte-identical**). `demo_merchant.py` shows the
+loop; `test_merchant.py` + `test_loans.py` cover it (LLM stubbed, never live in
+tests). Full design + the assumed decisions:
+[docs/llm-merchant-negotiation.md](docs/llm-merchant-negotiation.md).
+
+**Layer 3 — what remains (frontier, the actual game):** more interventions in the
+library (dig a well, open a trade route, haul grain to a famine); **reputation via
+propagation** (deeds → `knowledge.py` → standing — the scope doc's step 4, the one
+piece of the merchant loop still on the contribution proxy); wiring negotiation into
+the interactive bodies (`game.py`/`view_text.py`); and, when a live model is wanted,
+enabling `LLMMerchant` in a body (it is edge-only and off in the sim). **Confirm
+scope with the owner before the next big Layer-3 step.**
+
+**Track A (make the loop fun) — done this track:** contribution made *felt* (the news feed names *who*
 you kept warm and *why* it was worth what it was — `ContributionDetail` event);
 a persistent **impact ledger**; the **warning** as a real second lever (costs an
 action, spreads visibly, and reports a **measured** end-of-year effect via a
@@ -142,12 +246,24 @@ playtest "much later"; until then, prefer low-risk, high-legibility work):
    validator).
 2. **A second scarce good / second crisis** (e.g., a summer food blight) to test
    whether the loop stays interesting under competing pressures rather than one
-   wood/winter axis.
+   wood/winter axis. *Mechanic implemented — `food_blight_enabled` (default OFF),
+   cuts food gather yield to 12% in summer; `demo_blight.py` + `test_blight.py`.*
+   A real summer crisis appears (idle village ~43 food unmet) and a food-stocking
+   player rescues it. **Owner calls whether to turn it on in the game and playtest.**
+   *Scoring the food axis is now handled the RIGHT way* — not as a food special-case
+   but via the universal need registry above (`cfg.reward_food_need`). Feeding the
+   hungry earns realized contribution through the same pipeline as wood; the blight
+   is just one mechanic that makes food scarce enough to be worth pricing.
 3. **NPC dialogue stub** — walk-up-and-talk that renders a villager's *actual*
    belief. `SimCore.belief(agent_id, resource)` already returns `(value,
    confidence)`. This is the first concrete step toward a pixel-art / UE5 body.
+   *Done — `session.villager_line` / `worried_voices` (belief read through the
+   contract); pygame hover bubble + terminal `t`/voices; `test_dialogue.py`.*
 4. **Surface save/load in a body** (e.g. S/L keys). Persistence exists
    (`persistence.py`, `SimCore.serialize/load`) but no View exposes it yet.
+   *Done — whole-game save/load (`GameSession.save/load`, sim through the wall +
+   session layer), captured at a clean day boundary; `game.py` S/L keys + toast,
+   `view_text.py` save/load; `test_save_load_game.py`.*
 
 ---
 

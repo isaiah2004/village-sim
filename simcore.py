@@ -26,10 +26,16 @@ yields the same run.
 """
 from __future__ import annotations
 
-from agents import BuildWoodlotAction, CraftToolAction, GatherAction, Order, Strategy
+from agents import (AcceptDealAction, BuildWoodlotAction, CraftToolAction, GatherAction,
+                    InterventionAction, Order, Strategy)
 from config import Config, Resource
 from world import World
 import contract as C
+
+
+def _rv(r):
+    """Render a resource id as a plain string (tolerates str-enum or bare str)."""
+    return r.value if hasattr(r, "value") else r
 
 
 class ContractStrategy(Strategy):
@@ -122,6 +128,12 @@ class SimCore:
             self._strategy.q_actions.append(CraftToolAction())
         elif isinstance(intent, C.BuildWoodlot):
             self._strategy.q_actions.append(BuildWoodlotAction())
+        elif isinstance(intent, C.Perform):
+            self._strategy.q_actions.append(InterventionAction(intent.key))
+        elif isinstance(intent, C.AcceptDeal):
+            self._strategy.q_actions.append(AcceptDealAction(
+                intent.key, intent.principal, intent.interest, intent.term_days,
+                intent.merchant_id))
         elif isinstance(intent, C.Trade):
             self._strategy.q_orders.append(
                 Order(agent_id, intent.resource, intent.side, intent.qty, intent.price))
@@ -188,6 +200,17 @@ class SimCore:
             for asset in getattr(a, "assets", []):
                 if asset.built_tick == self._day:
                     self._events.append(C.AssetBuilt(a.id, asset.kind))
+        # interventions attempted this day (Layer 3) -- accepted or rejected
+        for (aid, key, accepted, spent, target, reason) in getattr(w, "_interventions_today", ()):
+            self._events.append(C.InterventionPerformed(
+                aid, key, accepted, round(spent, 4), target, reason))
+        # negotiated deals resolved this day (Layer 3) at the sim's hard gate
+        for (aid, mid, key, struck, principal, interest, term, reason) in getattr(w, "_deals_today", ()):
+            self._events.append(C.DealResolved(
+                aid, mid, key, struck, round(principal, 4), round(interest, 4), term, reason))
+        # loan servicing this day (repayment / pay-off / default)
+        for (aid, lid, event, payment, balance) in getattr(w, "_loan_events", ()):
+            self._events.append(C.LoanUpdated(aid, lid, event, round(payment, 4), round(balance, 4)))
         # knowledge network readout
         if w.prop is not None:
             vids = {a.id for a in w.agents if not a.is_player and not a.is_market_maker}
@@ -211,6 +234,9 @@ class SimCore:
 
     def snapshot(self) -> C.Snapshot:
         w = self.world
+        sc = w.scenario
+        rids = list(w.resource_ids)
+        cons = list(w.consumable_ids)
         agents = []
         for a in w.agents:
             wl = next((x for x in getattr(a, "assets", []) if x.kind == "woodlot"), None)
@@ -223,11 +249,13 @@ class SimCore:
                 woodlots=1 if wl else 0,
                 woodlot_level=wl.level if wl else 0,
                 woodlot_output=round(self.cfg.woodlot_wood_output * wl.level, 3) if wl else 0.0,
+                holdings={_rv(r): round(a.qty(r), 4) for r in rids},
+                fears={_rv(r): round(a.fear(r), 4) for r in cons},
             ))
 
         st = w.accountant.state
         markets = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in cons:                              # per-consumable, driven by scenario data
             cl = w.last_clearings.get(r)
             markets.append(C.MarketView(
                 resource=r, ref_price=round(w.ref_price[r], 4),
@@ -237,16 +265,34 @@ class SimCore:
                 bounty=round(st.bounty.get(r, 0.0), 4),
             ))
 
+        problems = [
+            C.ProblemView(ps.problem.key, ps.problem.kind, ps.problem.location,
+                          ps.problem.subject, ps.severity)
+            for ps in getattr(w, "problems", [])
+        ]
+
+        loans = []
+        for a in w.agents:
+            for ln in getattr(a, "loans", []):
+                loans.append(C.LoanView(
+                    agent_id=a.id, lender_id=ln.lender_id, principal=round(ln.principal, 4),
+                    interest=round(ln.interest, 4), balance=round(ln.balance, 4),
+                    term_days=ln.term_days, struck_day=ln.struck_day,
+                    per_day=round(ln.per_day, 4), defaulted=ln.defaulted))
+
         vu = getattr(w, "village_unmet", {Resource.WOOD: 0.0, Resource.FOOD: 0.0})
         return C.Snapshot(
-            day=self._day, season=self.cfg.season_for_day(self._day).value,
-            agents=agents, markets=markets,
+            day=self._day, season=w.driver.phase_name(self._day),
+            agents=agents, markets=markets, problems=problems, loans=loans,
             village_unmet_wood=round(vu.get(Resource.WOOD, 0.0), 4),
             village_unmet_food=round(vu.get(Resource.FOOD, 0.0), 4),
             shortage_agents=getattr(w, "day_short_agents", 0),
             total_contribution_paid=round(st.total_paid, 4),
             total_penalty=round(st.total_penalty, 4),
             done=self.done,
+            scenario=sc.name, primary_resource=_rv(sc.primary_resource),
+            consumables=tuple(_rv(r) for r in cons),
+            village_unmet={_rv(r): round(vu.get(r, 0.0), 4) for r in cons},
         )
 
     # ---------------- queries ----------------
@@ -265,6 +311,65 @@ class SimCore:
 
     def market(self, resource: Resource) -> C.MarketView:
         return next(m for m in self.snapshot().markets if m.resource == resource)
+
+    def problems(self) -> list:
+        """The world's live problem board (Layer 1): typed, located, severity-ranked
+        problems the player could resolve. Read-only; sorted worst-first."""
+        return sorted(self.snapshot().problems, key=lambda p: -p.severity)
+
+    def standing(self, agent_id: str = "PLAYER") -> float:
+        """The agent's reputation/standing that gates interventions (Layer 3):
+        realized contribution to date -- their track record of deeds."""
+        import interventions
+        a = self.world.by_id.get(agent_id)
+        return interventions.standing(a) if a else 0.0
+
+    def reputation(self, agent_id: str = "PLAYER") -> C.ReputationSummary:
+        """The agent's standing plus a plain-language band, for merchant negotiation
+        (Layer 3). Today standing = realized contribution; the descriptor is what a
+        merchant prompt uses instead of the raw number."""
+        import interventions
+        a = self.world.by_id.get(agent_id)
+        s = interventions.standing(a) if a else 0.0
+        d = ("unproven" if s < 40 else "known" if s < 200
+             else "trusted" if s < 600 else "renowned")
+        return C.ReputationSummary(standing=round(s, 4), descriptor=d)
+
+    def merchant_view(self, key: str, principal: float, interest: float, term_days: int,
+                      merchant_id: str = "mk00", agent_id: str = "PLAYER") -> C.MerchantView:
+        """The knowledge-gated projection a merchant reasons over for a proposal
+        (Layer 3): public reference prices, the merchant's own capital, the season,
+        public facts, and the counterparty's reputation -- never the AIC fair value
+        or hidden truth. This is what the (Scripted or LLM) merchant judges."""
+        w = self.world
+        sc = w.scenario
+        m = w.by_id.get(merchant_id)
+        ref = {_rv(r): round(w.ref_price[r], 4) for r in w.consumable_ids}
+        season = w.driver.phase_name(self._day)
+        crisis = sc.crisis_phase
+        dtw = w.driver.days_until_phase(self._day, crisis)
+        facts = (f"{crisis} is near",) if (season != crisis and dtw <= 25) else ()
+        return C.MerchantView(
+            merchant_id=merchant_id,
+            merchant_capital=round(m.money, 2) if m else 0.0,
+            ref_prices=ref, season=season, reputation=self.reputation(agent_id),
+            public_facts=facts, key=key, principal=round(principal, 4),
+            interest=round(interest, 4), term_days=term_days)
+
+    def interventions(self, agent_id: str = "PLAYER") -> list:
+        """The pre-authored action library as an agent sees it now: each entry is
+        (key, title, targets, capital_cost, min_standing, can_perform, reason) --
+        what a body renders as the player's action menu, greying out the locked
+        ones with the reason they're locked."""
+        import interventions as I
+        w = self.world
+        a = w.by_id.get(agent_id)
+        out = []
+        for iv in w.interventions.values():
+            accepted, reason = (False, "no such agent") if a is None else I.evaluate(w, a, iv)
+            out.append((iv.key, iv.title, iv.targets, iv.capital_cost,
+                        iv.min_standing, accepted, reason))
+        return out
 
     def welfare(self) -> dict:
         return self.world.metrics.summary()

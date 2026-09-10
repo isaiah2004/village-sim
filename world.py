@@ -24,13 +24,16 @@ from __future__ import annotations
 import random
 
 from accountant import Accountant
-from agents import (Asset, BuildWoodlotAction, Ctx, CraftToolAction, GatherAction,
-                    MarketMaker, Player, SpawnSpec, Villager)
+from agents import (AcceptDealAction, Asset, BuildWoodlotAction, Ctx, CraftToolAction,
+                    GatherAction, InterventionAction, Loan, MarketMaker, Order, Player,
+                    SpawnSpec, Villager)
 from config import Config, Resource, Season
 from knowledge import Claim, PropagationEngine, SocialGraph
 from lineage import LineageGraph
 from market import CallMarket
 from metrics import Metrics
+import interventions
+import problems
 
 _ZERO_UNMET = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
 
@@ -52,13 +55,33 @@ class World:
                               existing scenarios keep working.
         """
         self.cfg = cfg
+        # DESIGN.md: scenarios are DATA. Attach the live Scenario (from cfg if
+        # make_config set it, else by name) BEFORE anything reads its axes, and
+        # expose the driver + resource sets the mechanics iterate. A bare Config()
+        # resolves to "frostpine" -> the historical baseline, byte-identical.
+        import scenario as _scen
+        self.scenario = getattr(cfg, "scenario", None) or _scen.get_scenario(
+            getattr(cfg, "scenario_name", "frostpine"))
+        cfg.scenario = self.scenario
+        self.driver = self.scenario.driver
+        self.resource_ids = tuple(self.scenario.resource_ids())
+        self.consumable_ids = tuple(self.scenario.consumable_ids())
         self.rng = random.Random(cfg.seed)
         self.lineage = LineageGraph()
         self.market = CallMarket()
         self.accountant = Accountant(cfg)
         self.metrics = Metrics(cfg)
+        # Layer 1: the world's problem board (typed, located, severity-tracked).
+        # Observational -- refreshed from world-state each day, mutates nothing.
+        self.problems = problems.build_board(cfg)
+        # Layer 3: the pre-authored intervention library (data). Never applied
+        # unless a body submits a Perform intent AND cfg.interventions_enabled.
+        self.interventions = {iv.key: iv for iv in interventions.build_library(cfg)}
+        self._interventions_today: list = []      # this day's attempts, for events
+        self._deals_today: list = []              # this day's AcceptDeal outcomes
+        self._loan_events: list = []              # this day's loan repayments/defaults
         self.day = 0
-        self.ref_price = {r: cfg.intrinsic_value[r] for r in Resource}
+        self.ref_price = {r: cfg.intrinsic_value.get(r, 0.0) for r in self.resource_ids}
 
         # ----- spawn NPCs from the population registry -----
         # Default population: villagers + one Market Maker (the trading post)
@@ -87,7 +110,7 @@ class World:
         self.prop: PropagationEngine | None = None
         self.scheduled_injections: dict[int, list] = {}
         self.info_acts: list = []            # player-sourced info acts, for scoring
-        self.rumour_avg = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
+        self.rumour_avg = {r: 0.0 for r in self.consumable_ids}
         if cfg.propagation_enabled:
             # dedicated RNG so gossip shuffles never perturb the economic stream
             self.prop_rng = random.Random(cfg.seed ^ 0x5F3759DF)
@@ -98,8 +121,8 @@ class World:
         self._active_ids = {a.id for a in self.agents}
 
         # initialized empty so UI can read on day 0 before first market clearing
-        self.last_orders: dict = {r: [] for r in Resource}
-        self.last_clearings: dict = {r: None for r in Resource}
+        self.last_orders: dict = {r: [] for r in self.resource_ids}
+        self.last_clearings: dict = {r: None for r in self.resource_ids}
         self._player_money_at_day_start: float = self.player.money
         self._player_bonus_at_day_start: float = 0.0
 
@@ -114,12 +137,14 @@ class World:
         """
         for ag in self.agents:
             if ag.is_market_maker:
-                for r, qty in ((Resource.WOOD, 10.0), (Resource.FOOD, 10.0)):
+                for r in self.consumable_ids:
+                    qty = 10.0
                     lot = self.lineage.new_lot(r, "market", -1, "gather", qty)
                     ag.add_holding(lot.id, r, qty)
                 continue
-            for r in (Resource.WOOD, Resource.FOOD):
-                need = self.cfg.wood_per_day[Season.SPRING] if r == Resource.WOOD else self.cfg.food_per_day
+            for r in self.consumable_ids:
+                rspec = self.scenario.resource(r)
+                need = rspec.base_consume * self.driver.consume_mult(0, r)
                 qty = need * self.cfg.reserve_buffer_days
                 lot = self.lineage.new_lot(r, "nature", -1, "gather", qty)
                 ag.add_holding(lot.id, r, qty)
@@ -143,7 +168,13 @@ class World:
         bounty is visible before the player makes decisions.
         """
         self.day = day
-        season = self.cfg.season_for_day(day)
+        # The active driver's phase drives time, needs, and gather yields (DESIGN.md
+        # "Drivers"). For frostpine the phase name is the season and these values
+        # reproduce the historical season tables exactly (byte-identical).
+        season = self.driver.phase_name(day)
+        needs = {r: self.scenario.resource(r).base_consume * self.driver.consume_mult(day, r)
+                 for r in self.consumable_ids}
+        ymult = {r: self.driver.yield_mult(day, r) for r in self.resource_ids}
         # Refresh stamina for every agent NOW (not during production phase), so
         # the UI shows the correct stamina BEFORE the player plans actions.
         for ag in self.agents:
@@ -164,9 +195,10 @@ class World:
             cfg=self.cfg,
             day=day,
             season=season,
-            wood_need=self.cfg.wood_per_day[season],
-            food_need=self.cfg.food_per_day,
+            wood_need=needs.get(Resource.WOOD, 0.0),
+            food_need=needs.get(Resource.FOOD, 0.0),
             ref_price=dict(self.ref_price),
+            needs=needs, consumables=self.consumable_ids, yield_mult=ymult,
             bounty={},
             fair_price={},
         )
@@ -176,12 +208,19 @@ class World:
             cfg=self.cfg,
             day=day,
             season=season,
-            wood_need=self.cfg.wood_per_day[season],
-            food_need=self.cfg.food_per_day,
+            wood_need=needs.get(Resource.WOOD, 0.0),
+            food_need=needs.get(Resource.FOOD, 0.0),
             ref_price=dict(self.ref_price),
+            needs=needs, consumables=self.consumable_ids, yield_mult=ymult,
             bounty=dict(self.accountant.state.bounty),
             fair_price=dict(self.accountant.state.fair_price),
         )
+        # Layer 1: refresh the problem board from the day's world-state (the
+        # accountant's scarcity signal is now fresh). Pure read -- no sim effect.
+        problems.refresh(self.problems, self)
+        self._interventions_today = []       # reset the day's intervention attempts
+        self._deals_today = []               # reset the day's deal outcomes
+        self._loan_events = []               # reset the day's loan repayments/defaults
 
     def execute_day(self) -> None:
         """Run today's production -> market -> consumption -> belief -> surveillance."""
@@ -190,9 +229,11 @@ class World:
         self._consumption_phase()
         self._belief_update_phase()
         self.accountant.observe_sales(self._wood_sales_today)
-        self.accountant.update_surveillance(self.agents, self.ref_price[Resource.WOOD],
-                                            self.day_unmet[Resource.WOOD])
+        _primary = self.scenario.primary_resource
+        self.accountant.update_surveillance(self.agents, self.ref_price[_primary],
+                                            self.day_unmet.get(_primary, 0.0))
         self.accountant.charge_holding_fees(self.agents)
+        self._loan_phase()
         self.metrics.record(self, self._villager_ctx)
 
     def _ctx_for(self, ag):
@@ -202,76 +243,197 @@ class World:
     def _production_phase(self) -> None:
         # Note: stamina was refreshed in begin_day. Don't reset here -- that
         # would erase any decrements a Strategy made in decide_actions.
-        produced = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
+        produced = {r: 0.0 for r in self.consumable_ids}
         for ag in self.agents:
             ctx = self._ctx_for(ag)
             for action in ag.decide_actions(ctx):
                 if isinstance(action, GatherAction):
-                    produced[action.resource] += self._do_gather(ag, action.resource, ctx)
+                    produced[action.resource] = produced.get(action.resource, 0.0) \
+                        + self._do_gather(ag, action.resource, ctx)
                 elif isinstance(action, CraftToolAction):
                     self._do_craft_tool(ag, ctx)
                 elif isinstance(action, BuildWoodlotAction):
                     self._do_build_woodlot(ag, ctx)
-        # capital goods run AFTER labour: each woodlot yields wood (fed by upkeep food).
-        if self.cfg.capital_goods_enabled:
-            produced[Resource.WOOD] += self._run_woodlots()
+                elif isinstance(action, InterventionAction):
+                    self._do_intervention(ag, action.key, ctx)
+                elif isinstance(action, AcceptDealAction):
+                    self._do_accept_deal(ag, action, ctx)
+        # capital goods run AFTER labour: each capital good yields its output
+        # resource (frostpine's woodlot -> wood, fed by upkeep food). Outputs are
+        # data (scenario.capital), so this is not wood-specific.
+        if self.cfg.capital_goods_enabled and self.scenario.capital:
+            for out_res, q in self._run_woodlots().items():
+                produced[out_res] = produced.get(out_res, 0.0) + q
         for r, q in produced.items():
             self.accountant.observe_production(r, q)
 
+    def _capital_spec(self, kind: str | None = None):
+        """The scenario's capital-good DATA (CapitalSpec). Defaults to the primary
+        capital good; `kind` selects a specific one. frostpine's is the woodlot;
+        emberforge's is the forge -- same generic machinery, different values."""
+        caps = self.scenario.capital
+        if not caps:
+            return None
+        if kind is None:
+            return caps[0]
+        return next((c for c in caps if c.kind == kind), None)
+
     def _do_build_woodlot(self, ag, ctx: Ctx) -> None:
         """
-        Establish (level 1) or UPGRADE a woodlot. Building to level L costs
-        `woodlot_wood_cost * L` wood; each level adds `woodlot_wood_output` to the
-        daily yield. Provenance is the wood spent, rooted at the woodlot lot so
-        realized-effect credit flows to the builder.
+        Establish (level 1) or UPGRADE the scenario's capital good. Building to
+        level L costs `build_cost * L` of the build resource; each level adds
+        `output_per_level` to the daily yield. All values are DATA (CapitalSpec),
+        so this is generic -- frostpine's woodlot (wood-built, wood-yielding) and
+        emberforge's forge are the same code. Provenance is the resource spent,
+        rooted at the asset lot so realized-effect credit flows to the builder.
         """
-        wl = next((a for a in ag.assets if a.kind == "woodlot"), None)
-        cur = wl.level if wl else 0
-        if cur >= self.cfg.woodlot_max_level:
+        spec = self._capital_spec()
+        if spec is None:
             return
-        cost = self.cfg.woodlot_wood_cost * (cur + 1)
-        consumed = ag.take(Resource.WOOD, cost)
+        wl = next((a for a in ag.assets if a.kind == spec.kind), None)
+        cur = wl.level if wl else 0
+        if cur >= spec.max_level:
+            return
+        cost = spec.build_cost * (cur + 1)
+        consumed = ag.take(spec.build_cost_resource, cost)
         got = sum(q for _, q in consumed)
         if got < cost - 1e-6:
             if got > 0:   # not enough after all -> refund what we took
-                lot = self.lineage.new_lot(Resource.WOOD, ag.id, ctx.day, "gather", got)
-                ag.add_holding(lot.id, Resource.WOOD, got)
+                lot = self.lineage.new_lot(spec.build_cost_resource, ag.id, ctx.day, "gather", got)
+                ag.add_holding(lot.id, spec.build_cost_resource, got)
             return
         total = sum(q for _, q in consumed) or 1.0
         parents = [(lid, q / total) for lid, q in consumed]
         if wl is None:
-            lot = self.lineage.new_lot(Resource.WOODLOT, ag.id, ctx.day, "build", 1.0, parents=parents)
-            ag.assets.append(Asset(kind="woodlot", lot_id=lot.id, built_tick=ctx.day, level=1))
+            lot = self.lineage.new_lot(spec.kind, ag.id, ctx.day, "build", 1.0, parents=parents)
+            ag.assets.append(Asset(kind=spec.kind, lot_id=lot.id, built_tick=ctx.day, level=1))
         else:
             wl.level = cur + 1   # upgrade: yield scales; output stays rooted at its lot
 
-    def _run_woodlots(self) -> float:
-        """
-        Each woodlot yields `output * level` wood, provenance rooted at the woodlot
-        lot (so realized effect credits its builder). Workers eat `upkeep * level`
-        food/day; with no food the woodlot idles. Output lands in the owner's stock.
-        """
-        total = 0.0
+    def _do_intervention(self, ag, key: str, ctx: Ctx) -> None:
+        """Attempt a pre-authored world-change (Layer 3). Preconditions and the
+        authored effect live in interventions.py; the world just dispatches and
+        records the attempt so a body can react. No-op unless enabled + accepted."""
+        iv = self.interventions.get(key)
+        if iv is None:
+            self._interventions_today.append((ag.id, key, False, 0.0, "", "unknown intervention"))
+            return
+        accepted, spent, reason = interventions.perform(self, ag, iv, ctx.day)
+        self._interventions_today.append((ag.id, key, accepted, spent, iv.targets, reason))
+
+    def _do_accept_deal(self, ag, action, ctx: Ctx) -> None:
+        """Conclude a negotiated loan-financed deal (Layer 3), the HARD gate. Terms
+        arrive already negotiated (edge-side); the sim clamps them, re-checks the
+        intervention's preconditions and the merchant's capital, records the loan,
+        credits the principal, and applies the authored effect -- or rejects with a
+        reason. A negotiated 'yes' can never override a failed precondition here."""
+        key, mid = action.key, action.merchant_id
+        principal = max(0.0, float(action.principal))
+        interest = max(0.0, min(float(action.interest), self.cfg.loan_max_interest))   # clamp
+        term = max(1, min(int(action.term_days), self.cfg.loan_max_term_days))         # clamp
+
+        def reject(reason):
+            self._deals_today.append((ag.id, mid, key, False, 0.0, 0.0, 0, reason))
+
+        if not self.cfg.interventions_enabled:
+            return reject("interventions disabled")
+        if not self.cfg.loans_enabled:
+            return reject("loans disabled")
+        iv = self.interventions.get(key)
+        if iv is None:
+            return reject("unknown intervention")
+        merchant = self.by_id.get(mid)
+        if merchant is None or not merchant.is_market_maker:
+            return reject("no such merchant")
+        if merchant.money < principal:
+            return reject("merchant lacks capital")
+        # non-capital preconditions still hold; the loan supplies the capital.
+        ok, reason = interventions.evaluate(self, ag, iv, extra_capital=principal)
+        if not ok:
+            return reject(reason)
+        # strike: the merchant lends, the borrower records the debt, the effect fires.
+        merchant.money -= principal
+        ag.money += principal
+        loan = Loan(mid, principal, interest, term, ctx.day, balance=round(principal * (1.0 + interest), 6))
+        ag.loans.append(loan)
+        accepted, _spent, r2 = interventions.perform(self, ag, iv, ctx.day)
+        if not accepted:                       # unwind if the effect somehow fails
+            ag.money -= principal
+            merchant.money += principal
+            ag.loans.pop()
+            return reject(r2 or "intervention failed")
+        self._deals_today.append((ag.id, mid, key, True, principal, interest, term, ""))
+
+    def _loan_phase(self) -> None:
+        """Deterministic daily loan servicing (Layer 3). Each active loan takes an
+        equal installment; a borrower who cannot pay defaults (the lender seizes
+        what cash it can toward the balance, and the loan is marked defaulted -- a
+        black mark the reputation model will later propagate). No-op when disabled,
+        so validated scenarios stay byte-identical."""
+        if not self.cfg.loans_enabled:
+            return
         for ag in self.agents:
-            for asset in ag.assets:
-                if asset.kind != "woodlot":
+            for loan in ag.loans:
+                if loan.defaulted or loan.balance <= 1e-9:
                     continue
-                upkeep = self.cfg.woodlot_upkeep_food * asset.level
-                fed = sum(q for _, q in ag.take(Resource.FOOD, upkeep))
-                if fed < upkeep - 1e-6:
-                    if fed > 0:   # refund partial food; the woodlot idles
-                        lot = self.lineage.new_lot(Resource.FOOD, ag.id, self.day, "gather", fed)
-                        ag.add_holding(lot.id, Resource.FOOD, fed)
-                    continue
-                out = self.cfg.woodlot_wood_output * asset.level
-                lot = self.lineage.new_lot(Resource.WOOD, ag.id, self.day, "woodlot", out,
-                                           parents=[(asset.lot_id, 1.0)])
-                ag.add_holding(lot.id, Resource.WOOD, out)
-                total += out
-        return total
+                pay = min(loan.per_day, loan.balance)
+                lender = self.by_id.get(loan.lender_id)
+                if ag.money + 1e-9 >= pay:
+                    ag.money -= pay
+                    loan.balance = round(loan.balance - pay, 6)
+                    if lender is not None:
+                        lender.money += pay
+                    kind = "paid_off" if loan.balance <= 1e-9 else "repaid"
+                    self._loan_events.append((ag.id, loan.lender_id, kind, round(pay, 6), loan.balance))
+                else:
+                    seized = max(0.0, ag.money)          # can't make the installment -> default
+                    ag.money -= seized
+                    if lender is not None:
+                        lender.money += seized
+                    loan.balance = round(max(0.0, loan.balance - seized), 6)
+                    loan.defaulted = True
+                    self._loan_events.append((ag.id, loan.lender_id, "defaulted", round(seized, 6), loan.balance))
+
+    def _run_woodlots(self) -> dict:
+        """
+        Run every capital good the scenario defines. Each asset yields
+        `output_per_level * level` of its output resource, provenance rooted at the
+        asset lot (so realized effect credits its builder). Its workers eat
+        `upkeep_per_level * level` of the upkeep resource per day; with no upkeep
+        the asset idles. Output lands in the owner's stock. All values are DATA
+        (CapitalSpec) -- frostpine's woodlot (food -> wood) and emberforge's forge
+        are the same loop. Returns {output_resource: total produced}.
+        """
+        totals: dict = {}
+        for spec in self.scenario.capital:
+            for ag in self.agents:
+                for asset in ag.assets:
+                    if asset.kind != spec.kind:
+                        continue
+                    upkeep = spec.upkeep_per_level * asset.level
+                    fed = sum(q for _, q in ag.take(spec.upkeep_resource, upkeep))
+                    if fed < upkeep - 1e-6:
+                        if fed > 0:   # refund partial upkeep; the asset idles
+                            lot = self.lineage.new_lot(spec.upkeep_resource, ag.id, self.day, "gather", fed)
+                            ag.add_holding(lot.id, spec.upkeep_resource, fed)
+                        continue
+                    out = spec.output_per_level * asset.level
+                    lot = self.lineage.new_lot(spec.output_resource, ag.id, self.day, spec.kind, out,
+                                               parents=[(asset.lot_id, 1.0)])
+                    ag.add_holding(lot.id, spec.output_resource, out)
+                    totals[spec.output_resource] = totals.get(spec.output_resource, 0.0) + out
+        return totals
 
     def _do_gather(self, ag, r: Resource, ctx: Ctx) -> float:
-        base = self.cfg.base_yield[r] * self.cfg.season_yield_mult[ctx.season] * ag.skill[r]
+        mult = ctx.yield_mult.get(r, 1.0) if ctx.yield_mult else self.cfg.season_yield_mult[ctx.season]
+        base = self.cfg.base_yield[r] * mult * ag.skill[r]
+        # A summer food blight (flag-gated OFF by default) cuts food gather yield
+        # during its season -- the second-crisis lever. Wood is untouched; only
+        # food produced in the blight season shrinks, so a food shortfall builds
+        # exactly when winter-wood prep also wants attention.
+        if (r == Resource.FOOD and self.cfg.food_blight_enabled
+                and ctx.season == self.cfg.food_blight_season):
+            base *= self.cfg.food_blight_yield_mult
         parents = []
         if ag.has_tool:
             total = base * (1.0 + self.cfg.tool_yield_bonus)
@@ -309,22 +471,24 @@ class World:
         self._settled: dict = {}
         # snapshot of today's order book + clearings so the UI can explain
         # why the player's orders did or didn't clear.
-        self.last_orders: dict = {r: [] for r in Resource}
-        self.last_clearings: dict = {r: None for r in Resource}
+        self.last_orders: dict = {r: [] for r in self.resource_ids}
+        self.last_clearings: dict = {r: None for r in self.resource_ids}
         orders = []
         for ag in self.agents:
             orders.extend(ag.make_orders(self._ctx_for(ag)))
+        orders.extend(self._guild_support_orders())     # guild market model (data-selected)
         # Honest wood sell offers: sell orders at <= 1.5x current ref price.
         # (Fake offers at unreachable prices don't count -- prevents the
         # "post ask at 25 to look like a seller" exploit.)
-        honest_price_cap = self.ref_price[Resource.WOOD] * 1.5
+        primary = self.scenario.primary_resource        # anti-hoard watches the crisis good
+        honest_price_cap = self.ref_price[primary] * 1.5
         honest_offers = {a.id: 0.0 for a in self.agents}
         for o in orders:
-            if (o.resource == Resource.WOOD and o.side == "sell"
+            if (o.resource == primary and o.side == "sell"
                     and o.price <= honest_price_cap):
                 honest_offers[o.agent_id] += o.qty
         self.accountant.observe_honest_offers(honest_offers)
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in self.consumable_ids:
             res_orders = [o for o in orders if o.resource == r]
             self.last_orders[r] = res_orders
             demand = sum(o.qty for o in res_orders if o.side == "buy")
@@ -342,6 +506,29 @@ class World:
             lo = self.cfg.intrinsic_value[r] * self.cfg.price_floor_mult
             hi = self.cfg.intrinsic_value[r] * self.cfg.price_cap_mult
             self.ref_price[r] = max(lo, min(hi, self.ref_price[r]))
+
+    def _guild_support_orders(self) -> list:
+        """The guild market model (MarketSpec.model == 'guild') as DATA: the guild
+        hall (embodied by the market maker) posts a standing SUPPORT BID -- it
+        buys up to `quota` units of the covered good at a capped `price`, putting
+        a floor under producers. Supply beyond the quota overflows to the ordinary
+        call auction and clears at whatever the open book bears (the discount is
+        emergent). No effect for call_auction scenarios (returns nothing). Cleared
+        by the same CallMarket + _settle as every other order, so this is a
+        participant behaviour selected by data, not a per-scenario code path."""
+        spec = self.scenario.market
+        if spec.model != "guild":
+            return []
+        p = spec.params
+        resource = p.get("resource", self.scenario.primary_resource)
+        quota = float(p.get("quota", 0.0))
+        price = float(p.get("price", self.cfg.intrinsic_value.get(resource, 0.0)))
+        if quota <= 1e-9 or price <= 1e-9:
+            return []
+        guild = next((a for a in self.agents if a.is_market_maker), None)
+        if guild is None:
+            return []
+        return [Order(guild.id, resource, "buy", quota, price)]
 
     def _settle(self, clearing) -> None:
         for t in clearing.trades:
@@ -361,7 +548,7 @@ class World:
             pay = actually * t.price
             buyer.money -= pay
             seller.money += pay
-            if t.resource == Resource.WOOD:
+            if t.resource == self.scenario.primary_resource:
                 self._wood_sales_today[t.seller_id] = (
                     self._wood_sales_today.get(t.seller_id, 0.0) + actually
                 )
@@ -373,16 +560,16 @@ class World:
             bd["bought"] += actually; bd["bought_val"] += pay
 
     def _consumption_phase(self) -> None:
-        self.day_unmet = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
+        self.day_unmet = {r: 0.0 for r in self.consumable_ids}
         self.day_short_agents = 0
-        self.village_unmet = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}  # villagers only
+        self.village_unmet = {r: 0.0 for r in self.consumable_ids}  # villagers only
         self._per_agent_unmet = {}
         for ag in self.agents:
             ctx = self._ctx_for(ag)
             result = ag.consume_daily(ctx)
             short_today = False
-            own_unmet = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
-            for r in (Resource.WOOD, Resource.FOOD):
+            own_unmet = {r: 0.0 for r in self.consumable_ids}
+            for r in self.consumable_ids:
                 _, shortfall = result[r]
                 own_unmet[r] = shortfall
                 self.day_unmet[r] += shortfall
@@ -393,11 +580,15 @@ class World:
             self._per_agent_unmet[ag.id] = own_unmet
             if short_today:
                 self.day_short_agents += 1
-            wood_consumed, _ = result[Resource.WOOD]
-            # wood burned to meet a need = realized stabilising effect -> pay producers
-            self.accountant.reward_consumption(
-                Resource.WOOD, ag.id, wood_consumed, ctx.season, self.lineage, self.by_id
-            )
+            # A resource consumed to meet a registered need = realized stabilising
+            # effect -> pay its producers up the lineage. Driven by the need
+            # registry, so this is identical for wood, food, or any future need --
+            # no per-resource code. (Today only wood is a rewarded need by default.)
+            for need in self.accountant.rewarded_needs():
+                consumed_lots, _ = result[need.resource]
+                self.accountant.reward_consumption(
+                    need.resource, ag.id, consumed_lots, ctx.season, self.lineage, self.by_id
+                )
 
     # ---------- knowledge propagation API ----------
     def schedule_injection(self, day: int, target: str, claim: Claim,
@@ -442,7 +633,7 @@ class World:
             for ag in self.agents:
                 if ag.is_player or ag.is_market_maker:
                     continue
-                ag.update_belief(self._per_agent_unmet.get(ag.id, {}), self.village_unmet)
+                ag.update_belief(self._per_agent_unmet.get(ag.id, {}), self.village_unmet, consumables=self.consumable_ids)
             return
 
         # 1. real personal shortage = a first-hand independent witness of scarcity
@@ -450,12 +641,13 @@ class World:
             if ag.is_player or ag.is_market_maker:
                 continue
             own = self._per_agent_unmet.get(ag.id, {})
-            for r in (Resource.WOOD, Resource.FOOD):
+            for r in self.consumable_ids:
                 felt = own.get(r, 0.0)
                 if felt > 1e-3:
-                    mag = min(1.0, felt / max(self.cfg.wood_per_day[self.cfg.season_for_day(self.day)]
-                                             if r == Resource.WOOD else self.cfg.food_per_day, 1e-6))
-                    self.prop.inject(ag.id, Claim(r, mag, True, f"witness:{ag.id}:{r.value}", self.day),
+                    need_r = self._villager_ctx.needs.get(r, 1.0)
+                    mag = min(1.0, felt / max(need_r, 1e-6))
+                    rid = r.value if hasattr(r, "value") else r
+                    self.prop.inject(ag.id, Claim(r, mag, True, f"witness:{ag.id}:{rid}", self.day),
                                      authority=1.0, day=self.day)
 
         # 2. scheduled injections (events / sources / player claims) for today
@@ -474,10 +666,10 @@ class World:
         for ag in self.agents:
             if ag.is_player or ag.is_market_maker:
                 continue
-            rumour = {r: self.prop.scarcity(ag.id, r) for r in (Resource.WOOD, Resource.FOOD)}
-            ag.update_belief(self._per_agent_unmet.get(ag.id, {}), _ZERO_UNMET, rumour=rumour)
+            rumour = {r: self.prop.scarcity(ag.id, r) for r in self.consumable_ids}
+            ag.update_belief(self._per_agent_unmet.get(ag.id, {}), _ZERO_UNMET, rumour=rumour, consumables=self.consumable_ids)
 
         villagers = [a for a in self.agents if not a.is_player and not a.is_market_maker]
         vids = {a.id for a in villagers}
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in self.consumable_ids:
             self.rumour_avg[r] = self.prop.avg_scarcity(r, vids)

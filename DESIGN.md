@@ -108,6 +108,11 @@ Systems this one example needs:
 - The **intervention library**: preconditions → effects on world-state.
 - Those effects feed **Layer 1** state, which **Layer 2** prices.
 
+The intervention library is built (`interventions.py`, first rung `found_mill`).
+The **AI-agent negotiation step is scoped** in
+[docs/llm-merchant-negotiation.md](docs/llm-merchant-negotiation.md) — the LLM as a
+soft gate at the edge, the sim as the hard gate, all flag-gated.
+
 ## Sequencing (build order)
 
 1. **NOW — make Layer 2 universal.** Turn "need" into a **data-defined Need/Problem
@@ -121,6 +126,15 @@ Systems this one example needs:
 3. **THEN — Layer 3 interventions.** The pre-authored action library + AI
    negotiation + reputation-gating (the mill). Interventions need a world-state to
    act on, so this follows Layer 1.
+
+> **Status (implemented):** all three steps are built. Layer 2 is universal (the
+> data-defined need registry); the scenario system below is data (`scenario.py`);
+> all four MVP scenarios run headlessly and through the contract; the Layer-3
+> `found_mill` slice is scenario-agnostic (founds the scenario's own capital good).
+> The baseline is byte-identical (`regression.py`: 13 scenarios / 183 metrics, the
+> new worlds captured additively). Adding a world is proven to be one data entry by
+> `test_modularity.py`. See **[SCENARIOS.md](SCENARIOS.md)**. Deepening each layer
+> (reputation-via-propagation, the edge LLM merchant) and the frostpine game remain.
 
 ## Modularity contract — scenarios are DATA, not code
 

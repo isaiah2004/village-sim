@@ -46,6 +46,8 @@ def test_every_intent_type_is_accepted():
         C.BuildWoodlot: C.BuildWoodlot(),
         C.Trade: C.Trade(Resource.WOOD, "sell", 1.0, 5.0),
         C.Speak: C.Speak(Resource.WOOD, 0.8, True, "test_root", authority=0.6),
+        C.Perform: C.Perform("found_mill"),
+        C.AcceptDeal: C.AcceptDeal("found_mill", 100.0, 0.15, 60),
     }
     assert set(samples) == set(C.INTENT_TYPES), \
         "test does not cover every declared intent type"
@@ -109,7 +111,14 @@ def test_snapshot_shape():
         assert field_names(m) == field_names(C.MarketView)
     # every declared market resource is represented
     assert {m.resource for m in snap.markets} == {Resource.WOOD, Resource.FOOD}
-    print(f"  snapshot: {len(snap.agents)} agents, {len(snap.markets)} markets, shapes match")
+    # Layer 1 (v1.2, additive): the world-state problem board is carried and shaped
+    assert snap.problems, "snapshot should carry the problem board"
+    for p in snap.problems:
+        assert isinstance(p, C.ProblemView)
+        assert field_names(p) == field_names(C.ProblemView)
+        assert 0.0 <= p.severity <= 1.0, "problem severity must be normalised 0..1"
+    print(f"  snapshot: {len(snap.agents)} agents, {len(snap.markets)} markets, "
+          f"{len(snap.problems)} problems, shapes match")
 
 
 def test_body_references_resolve():

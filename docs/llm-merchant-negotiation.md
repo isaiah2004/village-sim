@@ -13,7 +13,7 @@ the record of what shipped. It obeys the non‑negotiables in [AGENTS.md](../AGE
 DESIGN.md's closing rule: **the LLM lives only at the edges, never holds
 quantitative state or mutates world truth; the authored causal model is
 load‑bearing, the LLM proposes, the sim validates.** Every piece is flag‑gated off
-by default, so the 140 golden metrics stay byte‑identical.
+by default, so the baseline golden metrics stay byte‑identical.
 
 ## Built (MVP) — what shipped and the decisions taken
 
@@ -118,8 +118,8 @@ Consequences that keep every guarantee intact:
 
 1. **Golden / headless tests never call the LLM.** They use a deterministic
    `ScriptedMerchant`. The sim depends on a `Merchant` *protocol*, not on Claude.
-   With the feature flag off, the code path is identical to today → 140 golden
-   metrics byte‑identical, no capture.
+   With the feature flag off, the code path is identical to today → the baseline golden
+   metrics stay byte‑identical, no capture.
 2. **Save/load stays deterministic.** The decision record (accepted, terms,
    interest, principal, the resulting loan) is ordinary sim state, serialized by
    `persistence.py` like any other. Reloading replays the recorded deal; it does

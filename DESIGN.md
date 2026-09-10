@@ -127,14 +127,23 @@ soft gate at the edge, the sim as the hard gate, all flag-gated.
    negotiation + reputation-gating (the mill). Interventions need a world-state to
    act on, so this follows Layer 1.
 
-> **Status (implemented):** all three steps are built. Layer 2 is universal (the
-> data-defined need registry); the scenario system below is data (`scenario.py`);
-> all four MVP scenarios run headlessly and through the contract; the Layer-3
-> `found_mill` slice is scenario-agnostic (founds the scenario's own capital good).
-> The baseline is byte-identical (`regression.py`: 13 scenarios / 183 metrics, the
-> new worlds captured additively). Adding a world is proven to be one data entry by
-> `test_modularity.py`. See **[SCENARIOS.md](SCENARIOS.md)**. Deepening each layer
-> (reputation-via-propagation, the edge LLM merchant) and the frostpine game remain.
+> **Status (implemented):** all three layers are built and deepened. Layer 2 is
+> universal (the data-defined need registry). The scenario system is data
+> (`scenario.py`): **seven registered worlds** (frostpine, tidewater, guildhall,
+> plaguewatch, emberforge, dustveil, fallowmere) run headlessly, fire a real
+> crisis, save/load byte-identically, and drive through the contract — a single
+> `test_scenarios.py` guard holds all of that for every world, and adding one is
+> proven to be one data entry by `test_modularity.py`. Layer 3 is a
+> reputation+capital-gated **intervention ladder** (relief shipment, capital,
+> crew, granary, trade route), scenario-agnostic; reputation is **deeds propagated
+> through `knowledge.py`**; the merchant negotiation runs a real edge LLM
+> (opt-in, off in tests). A **scenario-agnostic playable View** (`view_play.py`)
+> plays any world through the contract, and the contract has a **JSON wire format**
+> (`docs/contract-schema.md`) a UE5/web client can drive. The baseline is
+> byte-identical (`regression.py`: 16 scenarios / 225 metrics, new worlds captured
+> additively). See **[SCENARIOS.md](SCENARIOS.md)** and
+> **[docs/contract-schema.md](docs/contract-schema.md)**. What remains: the pygame
+> body's per-world rendering, and the frostpine game's "is it fun" playtest.
 
 ## Modularity contract — scenarios are DATA, not code
 

@@ -60,9 +60,10 @@ in the rules or the sim. `view_text.py` (a terminal body sharing nothing with
 The world's axes — resources, the cyclical driver, needs, the market model, the
 population, and capital goods — are **data**, selected by a named `Scenario`. The
 sim and the contribution index read those axes generically, so **adding a whole new
-world is one data entry: a name and values, zero new logic**. Four MVP worlds ship
-(`frostpine`, `tidewater`, `guildhall`, `emberforge`); `demo_scenarios.py` is a thin
-body that drives *any* of them through the contract alone.
+world is one data entry: a name and values, zero new logic**. Seven worlds ship
+(`frostpine`, `tidewater`, `guildhall`, `plaguewatch`, `emberforge`, `dustveil`,
+`fallowmere`); `view_play.py` and `demo_scenarios.py` are thin bodies that drive
+*any* of them through the contract alone.
 
 ```bash
 python demo_scenarios.py                 # run every registered scenario headlessly
@@ -97,7 +98,7 @@ numbers byte-for-byte.
 | `contract_json.py` | JSON wire codec for the contract (Intents/Events/Snapshot) + a machine-readable `schema()`. |
 | `simservice.py` | `SimService` — drive the sim across a JSON boundary (the UE5/sim-as-a-service seam); `demo_service.py` is a working client. See [docs/contract-schema.md](docs/contract-schema.md). |
 | `check.py` | The foundation gate: regression + conformance + persistence + unit tests. |
-| `regression.py` + `golden.json` | Golden-master safety net (14 scenarios, 197 metrics — frostpine's rows byte-identical). |
+| `regression.py` + `golden.json` | Golden-master safety net (16 scenarios, 225 metrics — baseline rows byte-identical). |
 | `test_*.py` | Behavioural + contract + persistence + `test_modularity.py` (the data-driven-world proof). |
 | `main.py`, `demo_knowledge.py` | Headless frostpine runners the golden master mirrors. |
 | `demo_scenarios.py` | A thin, scenario-agnostic body driving any world through the contract. |
@@ -107,8 +108,14 @@ numbers byte-for-byte.
 
 **Phase 1 (lock the model + contract) is finalized.** The contract is frozen,
 save/load is implemented, and the golden master is locked. **The world model is now
-fully data-driven** — Layer 2 (the index) is universal, scenarios are data, four MVP
-worlds run, the Layer 3 intervention slice is scenario-agnostic, and everything is
-drivable through the contract by any View/UE5. **Phase 2 (prove it's fun)** continues
-on the frostpine game. See **[AGENTS.md](AGENTS.md)** for the roadmap and
+fully data-driven and deep:** Layer 2 (the index) is universal; **seven worlds** run
+as data (each fires a real crisis, save/loads byte-identically, and drives through
+the contract — guarded for every world by `test_scenarios.py`); Layer 3 is a
+reputation+capital-gated **intervention ladder** with reputation as **propagated
+deeds** and a real **edge LLM merchant** (opt-in, off in tests); a
+**scenario-agnostic playable View** (`view_play.py`) plays any world; and the
+contract has a **JSON wire format** ([docs/contract-schema.md](docs/contract-schema.md))
+a UE5/web client can drive. `python check.py` runs **21 gates**; golden master is
+16 scenarios / 225 metrics (baselines byte-identical). **Phase 2 (prove it's fun)**
+continues on the frostpine game. See **[AGENTS.md](AGENTS.md)** for the roadmap,
 **[SCENARIOS.md](SCENARIOS.md)** for adding worlds.

@@ -149,3 +149,22 @@ the wire / robust to bad requests. Found & fixed a real bug: the service first s
 mid-turn (not at a boundary) so load re-saved differently -- fixed by keeping the
 core at a boundary between requests. golden.json UNCHANGED (new seam only). check.py
 green, 21 gates.
+
+### Item 6 — docs coherence ✓ (branch: claude/docs-coherence)
+
+Brought the docs current with the integrated + backlog state:
+  * DESIGN.md status note: all three layers built AND deepened; 7 worlds; the
+    intervention ladder; reputation = propagated deeds; edge LLM merchant; the
+    playable View; the JSON contract boundary; golden 16 scenarios / 225 metrics.
+  * README: status block rewritten (21 gates, 7 worlds, the new capabilities);
+    "worlds are data" now lists all seven; file map already carried view_play.py /
+    contract_json.py / simservice.py / reputation.py; golden count -> 16/225.
+  * AGENTS.md: "what to build next" recap of everything now built + the honest
+    frontier (pygame per-world rendering deferred; the fun playtest is the human's);
+    contract marked FROZEN v1.5; brittle "140 golden metrics" phrasings reworded to
+    "baseline golden metrics" (feature-off = baseline unchanged, no stale number).
+  * CONTRACT schema doc shipped in item 5 (docs/contract-schema.md); linked from
+    README/DESIGN/AGENTS.
+  * llm-merchant doc: "140 golden metrics" -> "baseline golden metrics".
+
+Docs-only; no code, golden.json UNCHANGED. check.py green, 21 gates.

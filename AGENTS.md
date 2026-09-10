@@ -43,7 +43,7 @@ python view_text.py --demo      # scripted terminal run (CI-safe, no input)
    *drive logic*. This wall is what keeps the contribution accounting honest and
    makes the shipped game double as the research harness.
 
-2. **The contract is FROZEN (v1.1).** In `contract.py`:
+2. **The contract is FROZEN (v1.5, additive-only since v1.0).** In `contract.py`:
    - *Additive* changes (a new optional field with a default, a wholly new Event
      type) → **minor** version bump + a one-line note. These keep old bodies working.
    - *Breaking* changes (rename/retype/re-mean a field) → **major** bump + a
@@ -124,14 +124,21 @@ SimCore + contract  →  GameSession (session.py)  →  View (game.py, view_text
 
 > **North star: [DESIGN.md](DESIGN.md).** Read it before choosing work. The index
 > is a **calculator, not the game**; never hardcode a scenario into it. The build
-> order is settled there: **(1) make Layer 2 (the index) universal — DONE below;
-> (2) Layer 1 world-model + the scenario system — DONE below; (3) Layer 3
-> interventions — first piece DONE below, now scenario-agnostic.** All three
-> layers work, the **world model is fully data-driven (scenarios are data)**, and
-> everything is drivable through the contract by any View/UE5. The frontier is
-> deepening each layer (esp. reputation-via-propagation and the LLM merchant at
-> the edge) and the frostpine game. Confirm scope with the owner before the next
-> big step.
+> order is settled there: **(1) Layer 2 universal — DONE; (2) Layer 1 world-model +
+> the scenario system — DONE; (3) Layer 3 interventions — DONE, a scenario-agnostic
+> ladder.** All three layers are built AND deepened (see the recap below). Confirm
+> scope with the owner before the next big step.
+>
+> **Now built (recap):** seven data-defined worlds, each guarded by
+> `test_scenarios.py` (runs a year, fires a real crisis, save/loads byte-identically,
+> drives through the contract); a reputation+capital-gated **intervention ladder**
+> (`interventions.py`); **reputation = propagated deeds** (`reputation.py`); a real
+> **edge LLM merchant** (opt-in, off in tests); a **scenario-agnostic playable View**
+> (`view_play.py`); and a **JSON contract boundary** (`contract_json.py` /
+> `simservice.py` / `docs/contract-schema.md`) a UE5/web client can drive. `check.py`
+> is **21 gates**; golden 16 scenarios / 225 metrics. **The frontier now:** the
+> pygame body's per-world rendering (deliberately deferred — needs a session that can
+> see the screen), and the frostpine game's "is it fun" playtest (the human's call).
 
 **The world model is now DATA — the scenario system.** A world's axes (resources,
 the cyclical driver, needs, the market model, population, capital goods) are a
@@ -148,7 +155,7 @@ pure data. The capital-goods system, the player's skill, agent inventories,
 metrics, problems, the `found_mill` intervention, per-consumer needs
 (`NeedSpec.consumer`), trade-good production (`produces`), and the demand-side
 driver were all generalized off scenario data while keeping frostpine
-**byte-identical** (`regression.py` now 14 scenarios / 197 metrics, the new worlds
+**byte-identical** (`regression.py` now 16 scenarios / 225 metrics, the new worlds
 captured **additively** — frostpine's 140 untouched). The contract went **v1.4 →
 v1.5** (additive): `AgentView.holdings`/`.fears` and `Snapshot.scenario`/
 `.primary_resource`/`.consumables`/`.village_unmet` are generic resource-keyed
@@ -176,7 +183,7 @@ DATA (`problems.py`): a `Problem` = key, TYPE (kind), LOCATION, subject; its
 world moves. Two authored TYPES ship — `scarcity` (reuses the index's own scarcity
 signal) and `capital_gap` (a non-consumption "missing infrastructure" problem, the
 mill shape). The board is observational (`problems.refresh` in `world.begin_day`,
-mutates nothing → the **140 golden metrics stay byte-identical**, no capture) and
+mutates nothing → the **baseline golden metrics stay byte-identical**, no capture) and
 exposed additively on the contract (`ProblemView` + `Snapshot.problems`, **v1.1 →
 v1.2**, plus `SimCore.problems()`). `demo_problems.py` shows it over a year;
 `test_problems.py` proves typed/located/data, world-tracked severity, that building
@@ -197,7 +204,7 @@ flags). A new `Perform(key)` contract intent (**v1.2 → v1.3**, additive, + an
 deterministic EFFECT to world-state — the ONLY place an intervention touches the
 sim. First rung: `found_mill` — a capital-financed woodlot that lowers the
 `capital_gap:wood` problem and whose wood the index credits to the founder. OFF by
-default (`cfg.interventions_enabled`) → the **140 golden metrics stay byte-identical**
+default (`cfg.interventions_enabled`) → the **baseline golden metrics stay byte-identical**
 (no capture). `demo_interventions.py` shows the two-year loop (locked early → prove
 yourself → found & grow the mill → capital gap 1.00→0.00); `test_interventions.py`
 proves library-data, gated-off no-op, precondition gating, the world-change effect +
@@ -216,7 +223,7 @@ an intervention by negotiating a loan with a merchant. `merchant.py` (edge) has 
 (**contract v1.3 → v1.4**; + `DealResolved`/`LoanUpdated` events,
 `MerchantView`/`LoanView` reads, `SimCore.merchant_view`/`reputation`), where
 `world._do_accept_deal` is the HARD gate and `world._loan_phase` services a
-deterministic `Loan` (`cfg.loans_enabled`, default off → **140 golden metrics
+deterministic `Loan` (`cfg.loans_enabled`, default off → **baseline golden metrics
 byte-identical**). The **LLM adapter is a real, runnable edge negotiator**: one
 `client.messages.create` with a cached persona, a strict `submit_decision` tool
 (schema-valid data, not regexed text), `claude-haiku-4-5` (a cheap bounded NPC

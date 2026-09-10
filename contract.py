@@ -42,7 +42,14 @@ from config import Resource, Season
 #       events; MerchantView/ReputationSummary reads; LoanView + Snapshot.loans --
 #       Layer 3's merchant negotiation + loan financing. Minor bump; older bodies
 #       never submit AcceptDeal, ignore the new events, and skip the new reads.
-CONTRACT_VERSION = "1.4"
+#   1.5 (2026-09-10) additive: universal (scenario-agnostic) read fields so a body
+#       can render ANY world without knowing wood/food. AgentView.holdings/fears
+#       (resource-id -> qty/fear dicts); Snapshot.scenario/primary_resource/
+#       consumables/village_unmet (the generic mirror of village_unmet_wood/food).
+#       The frostpine-named fields (wood, food, fear_wood, village_unmet_wood, ...)
+#       are UNCHANGED and still populated for frostpine, so older bodies keep
+#       working; a universal body reads the dicts instead. Minor bump.
+CONTRACT_VERSION = "1.5"
 
 __all__ = [
     "CONTRACT_VERSION", "Resource", "Season",
@@ -304,6 +311,11 @@ class AgentView:
     woodlots: int = 0            # owned capital goods of this kind
     woodlot_level: int = 0       # 0 = none; else current upgrade level
     woodlot_output: float = 0.0  # wood/day the woodlot yields at its level
+    # universal (scenario-agnostic) mirrors -- resource-id -> value for EVERY
+    # resource in the world, so a body renders any scenario without wood/food
+    # knowledge. The named fields above are the frostpine slices of these.
+    holdings: dict = field(default_factory=dict)   # resource id -> qty held
+    fears: dict = field(default_factory=dict)       # resource id -> perceived scarcity 0..1
 
 
 @dataclass
@@ -385,3 +397,10 @@ class Snapshot:
     total_contribution_paid: float = 0.0
     total_penalty: float = 0.0
     done: bool = False
+    # universal (scenario-agnostic) identity + welfare, so a body can label and
+    # render any world. village_unmet is the generic mirror of village_unmet_wood/
+    # food (resource id -> unmet); consumables lists the goods that deplete daily.
+    scenario: str = "frostpine"
+    primary_resource: str = "wood"       # the crisis good (metrics/UI focus)
+    consumables: tuple = ("wood", "food")
+    village_unmet: dict = field(default_factory=dict)   # resource id -> village unmet

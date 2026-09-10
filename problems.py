@@ -57,24 +57,28 @@ def _severity_scarcity(world, subject: str) -> float:
     """A consumption good is short. Reuse the index's OWN scarcity signal (the
     accountant's forecast ratio) so the problem's severity is exactly what Layer 2
     already prices -- no second definition of 'how bad is it'."""
-    r = Resource(subject)
-    return max(0.0, min(1.0, world.accountant.state.scarcity.get(r, 0.0)))
+    return max(0.0, min(1.0, world.accountant.state.scarcity.get(subject, 0.0)))
 
 
 def _severity_capital_gap(world, subject: str) -> float:
     """The village leans on hand-labour because it lacks income-generating
-    infrastructure. Severity = the share of daily demand NOT covered by owned
-    capital (woodlots). 1 = no capital at all; 0 = capital alone could meet demand.
-    A genuinely different, non-consumption problem -- the 'missing mill' shape."""
-    r = Resource(subject)
-    season = world.cfg.season_for_day(world.day)
+    infrastructure. Severity = the share of daily demand for `subject` NOT covered
+    by owned capital that outputs it. 1 = no capital at all; 0 = capital alone
+    could meet demand. A non-consumption problem -- the 'missing mill' shape.
+    Demand and capital come from scenario DATA, so it works for any world."""
+    day = world.day
     consumers = [a for a in world.agents if not a.is_market_maker]
-    demand = len(consumers) * world.cfg.wood_per_day[season] if r == Resource.WOOD else 0.0
+    rspec = next((x for x in world.scenario.resources if x.id == subject), None)
+    per = (rspec.base_consume if rspec else 0.0) * world.driver.consume_mult(day, subject)
+    demand = len(consumers) * per
     if demand <= 1e-9:
         return 0.0
-    capacity = sum(world.cfg.woodlot_wood_output * asset.level
+    out_per_level = next((c.output_per_level for c in getattr(world.scenario, "capital", ())
+                          if c.output_resource == subject), 0.0)
+    kinds = {c.kind for c in getattr(world.scenario, "capital", ()) if c.output_resource == subject}
+    capacity = sum(out_per_level * asset.level
                    for a in world.agents for asset in getattr(a, "assets", [])
-                   if asset.kind == "woodlot")
+                   if asset.kind in kinds)
     return max(0.0, min(1.0, 1.0 - capacity / demand))
 
 
@@ -88,10 +92,16 @@ def default_problems(cfg: Config) -> list[Problem]:
     """The world's problem board as DATA: a scarcity problem per registered need
     (typed, located in the village), plus the village's capital-infrastructure gap.
     Adding a located problem is a row here; adding a new TYPE is one evaluator."""
-    board = [Problem(f"scarcity:{need.resource.value}", "scarcity", "village",
-                     need.resource.value)
+    def _rid(r):
+        return r.value if hasattr(r, "value") else r
+    board = [Problem(f"scarcity:{_rid(need.resource)}", "scarcity", "village", _rid(need.resource))
              for need in build_registry(cfg)]
-    board.append(Problem("capital_gap:wood", "capital_gap", "village", "wood"))
+    # a capital-gap problem per capital good's output (frostpine: capital_gap:wood)
+    for capspec in getattr(getattr(cfg, "scenario", None), "capital", ()):
+        board.append(Problem(f"capital_gap:{capspec.output_resource}", "capital_gap",
+                             "village", capspec.output_resource))
+    if not getattr(cfg, "scenario", None):
+        board.append(Problem("capital_gap:wood", "capital_gap", "village", "wood"))
     return board
 
 

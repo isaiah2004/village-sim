@@ -1,17 +1,26 @@
 """
 Per-day metrics collection, text reporting, and optional plotting.
 
-Records the time series an analyst would want to see: prices, aggregate
-reserves, advertised incentives, unmet need (shortages), reward paid out, and
-the Player's wealth. `summary()` distils the headline numbers; `report()`
-prints a comparison-friendly block; `plot()` writes PNGs if matplotlib is
-available.
+Records the time series an analyst would want: prices, aggregate reserves,
+advertised incentives, unmet need (shortages), reward paid out, and the Player's
+wealth. The series are keyed by the scenario's resource ids and the driver's phase
+names, so metrics work for ANY world (DESIGN.md). For frostpine those ids/phases
+are wood/food and the four seasons, so the keys and values are byte-identical to
+the historical metrics; a scenario like tidewater produces fish/grain + tide-phase
+keys captured additively.
+
+`summary()` distils the headline numbers (per-consumable unmet, the crisis-phase
+unmet of the primary good, prices/fear of the primary good, the ledger, player).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from config import Config, Resource, Season
+
+
+def _rid(r):
+    return r.value if hasattr(r, "value") else r
 
 
 @dataclass
@@ -21,107 +30,103 @@ class Metrics:
     last_clearing = None
 
     def __post_init__(self):
-        self.series = {
-            k: [] for k in (
-                "season", "wood_price", "food_price", "wood_reserve", "food_reserve",
-                "wood_bounty", "village_unmet_wood", "village_unmet_food",
-                "unmet_wood", "unmet_food", "n_short", "village_fear_wood",
-                "village_fear_food",
-                "reward_today", "reward_total", "penalty_total",
-                "player_money", "player_wood", "player_bonus", "hoard_flags",
-                # knowledge propagation (0 on legacy runs)
-                "rumour_wood", "rumour_food", "aware_food", "aware_wood",
-                "roots_food", "roots_wood",
-            )
-        }
+        sc = getattr(self.cfg, "scenario", None)
+        if sc is not None:
+            self.consumables = [_rid(r) for r in sc.consumable_ids()]
+            self.primary = _rid(sc.primary_resource)
+            self.crisis = sc.crisis_phase
+        else:                                   # legacy frostpine defaults
+            self.consumables = ["wood", "food"]
+            self.primary = "wood"
+            self.crisis = "winter"
+        base = ["season", "n_short", "reward_today", "reward_total", "penalty_total",
+                "player_money", "player_bonus", "hoard_flags",
+                f"player_{self.primary}"]
+        per = []
+        for r in self.consumables:
+            per += [f"{r}_price", f"{r}_reserve", f"{r}_bounty", f"village_unmet_{r}",
+                    f"unmet_{r}", f"village_fear_{r}", f"rumour_{r}", f"aware_{r}", f"roots_{r}"]
+        self.series = {k: [] for k in base + per}
 
     def record(self, world, ctx) -> None:
         self.days.append(ctx.day)
         s = self.series
         s["season"].append(ctx.season.value if hasattr(ctx.season, "value") else ctx.season)
-        s["wood_price"].append(world.ref_price[Resource.WOOD])
-        s["food_price"].append(world.ref_price[Resource.FOOD])
-        s["wood_reserve"].append(sum(a.qty(Resource.WOOD) for a in world.agents))
-        s["food_reserve"].append(sum(a.qty(Resource.FOOD) for a in world.agents))
-        s["wood_bounty"].append(world.accountant.state.bounty.get(Resource.WOOD, 0.0))
-        s["village_unmet_wood"].append(world.village_unmet[Resource.WOOD])
-        s["village_unmet_food"].append(world.village_unmet[Resource.FOOD])
-        s["unmet_wood"].append(world.day_unmet[Resource.WOOD])
-        s["unmet_food"].append(world.day_unmet[Resource.FOOD])
         s["n_short"].append(world.day_short_agents)
-        villagers = [a for a in world.agents
-                     if not a.is_player and not a.is_market_maker]
-        s["village_fear_wood"].append(
-            sum(a.fear(Resource.WOOD) for a in villagers) / max(len(villagers), 1))
-        s["village_fear_food"].append(
-            sum(a.fear(Resource.FOOD) for a in villagers) / max(len(villagers), 1))
         s["reward_today"].append(world.accountant.state.paid_today)
         s["reward_total"].append(world.accountant.state.total_paid)
         s["penalty_total"].append(world.accountant.state.total_penalty)
         s["player_money"].append(world.player.money)
-        s["player_wood"].append(world.player.qty(Resource.WOOD))
         s["player_bonus"].append(world.player.bonus_earned)
         s["hoard_flags"].append(len(world.accountant.state.hoard_flags))
-        # knowledge propagation series
-        s["rumour_wood"].append(world.rumour_avg[Resource.WOOD])
-        s["rumour_food"].append(world.rumour_avg[Resource.FOOD])
-        if world.prop is not None:
-            vids = {a.id for a in villagers}
-            s["aware_food"].append(world.prop.aware_fraction(Resource.FOOD, vids))
-            s["aware_wood"].append(world.prop.aware_fraction(Resource.WOOD, vids))
-            s["roots_food"].append(world.prop.distinct_roots(Resource.FOOD, vids))
-            s["roots_wood"].append(world.prop.distinct_roots(Resource.WOOD, vids))
-        else:
-            for k in ("aware_food", "aware_wood", "roots_food", "roots_wood"):
-                s[k].append(0.0)
+        s[f"player_{self.primary}"].append(world.player.qty(self.primary))
+        villagers = [a for a in world.agents if not a.is_player and not a.is_market_maker]
+        vids = {a.id for a in villagers}
+        n = max(len(villagers), 1)
+        for r in self.consumables:
+            s[f"{r}_price"].append(world.ref_price.get(r, 0.0))
+            s[f"{r}_reserve"].append(sum(a.qty(r) for a in world.agents))
+            s[f"{r}_bounty"].append(world.accountant.state.bounty.get(r, 0.0))
+            s[f"village_unmet_{r}"].append(world.village_unmet.get(r, 0.0))
+            s[f"unmet_{r}"].append(world.day_unmet.get(r, 0.0))
+            s[f"village_fear_{r}"].append(sum(a.fear(r) for a in villagers) / n)
+            s[f"rumour_{r}"].append(world.rumour_avg.get(r, 0.0))
+            if world.prop is not None:
+                s[f"aware_{r}"].append(world.prop.aware_fraction(r, vids))
+                s[f"roots_{r}"].append(world.prop.distinct_roots(r, vids))
+            else:
+                s[f"aware_{r}"].append(0.0)
+                s[f"roots_{r}"].append(0.0)
 
     # ---------- analysis ----------
     def summary(self) -> dict:
         s = self.series
-        winter_idx = [i for i, sea in enumerate(s["season"]) if sea == Season.WINTER.value]
-        winter_village_unmet_wood = sum(s["village_unmet_wood"][i] for i in winter_idx)
-        return {
-            # village welfare (the metric that matters: how much did *villagers* suffer)
-            "village_unmet_wood": sum(s["village_unmet_wood"]),
-            "winter_village_unmet_wood": winter_village_unmet_wood,
-            "village_unmet_food": sum(s["village_unmet_food"]),
+        prim, crisis = self.primary, self.crisis
+        crisis_idx = [i for i, ph in enumerate(s["season"]) if ph == crisis]
+        pp = s[f"{prim}_price"]
+        fear = s[f"village_fear_{prim}"]
+        out = {
+            f"{crisis}_village_unmet_{prim}": sum(s[f"village_unmet_{prim}"][i] for i in crisis_idx),
             "shortage_days": sum(1 for x in s["n_short"] if x > 0),
-            # market signals
-            "max_wood_price": max(s["wood_price"]),
-            "mean_wood_price": sum(s["wood_price"]) / len(s["wood_price"]),
-            "winter_max_wood_price": max((s["wood_price"][i] for i in winter_idx), default=0.0),
-            "mean_village_fear_wood": sum(s["village_fear_wood"]) / max(len(s["village_fear_wood"]), 1),
-            "max_village_fear_wood": max(s["village_fear_wood"]) if s["village_fear_wood"] else 0.0,
-            # AIC ledger
+            f"max_{prim}_price": max(pp) if pp else 0.0,
+            f"mean_{prim}_price": (sum(pp) / len(pp)) if pp else 0.0,
+            f"{crisis}_max_{prim}_price": max((pp[i] for i in crisis_idx), default=0.0),
+            f"mean_village_fear_{prim}": (sum(fear) / len(fear)) if fear else 0.0,
+            f"max_village_fear_{prim}": max(fear) if fear else 0.0,
             "total_reward_paid": s["reward_total"][-1] if s["reward_total"] else 0.0,
             "total_penalty": s["penalty_total"][-1] if s["penalty_total"] else 0.0,
             "flag_days": sum(1 for x in s["hoard_flags"] if x > 0),
-            # player
             "player_final_money": s["player_money"][-1] if s["player_money"] else 0.0,
             "player_bonus_earned": s["player_bonus"][-1] if s["player_bonus"] else 0.0,
         }
+        # per-consumable total unmet (village welfare)
+        for r in self.consumables:
+            out[f"village_unmet_{r}"] = sum(s[f"village_unmet_{r}"])
+        return out
 
     def report(self, title: str) -> str:
         d = self.summary()
-        return (
-            f"=== {title} ===\n"
-            f"  VILLAGE welfare:\n"
-            f"    shortage days .................. {d['shortage_days']:>8}\n"
-            f"    villagers' unmet wood (total)... {d['village_unmet_wood']:>8.1f}\n"
-            f"      of which during WINTER........ {d['winter_village_unmet_wood']:>8.1f}\n"
-            f"    villagers' unmet food (total)... {d['village_unmet_food']:>8.1f}\n"
-            f"    mean / max villager fear (wood)  {d['mean_village_fear_wood']:>6.2f} / {d['max_village_fear_wood']:>6.2f}\n"
-            f"  MARKET:\n"
-            f"    wood price mean/max/winter-max.. "
-            f"{d['mean_wood_price']:>5.2f} / {d['max_wood_price']:>5.2f} / {d['winter_max_wood_price']:>5.2f}\n"
-            f"  AIC ledger:\n"
-            f"    bounty paid out (total)......... {d['total_reward_paid']:>8.1f}\n"
+        prim, crisis = self.primary, self.crisis
+        lines = [f"=== {title} ===", "  VILLAGE welfare:",
+                 f"    shortage days .................. {d['shortage_days']:>8}"]
+        for r in self.consumables:
+            lines.append(f"    villagers' unmet {r:<8}...... {d[f'village_unmet_{r}']:>8.1f}")
+        lines.append(f"      of which {prim} during {crisis}.. {d[f'{crisis}_village_unmet_{prim}']:>8.1f}")
+        lines += [
+            f"    mean/max villager fear ({prim})  "
+            f"{d[f'mean_village_fear_{prim}']:>6.2f} / {d[f'max_village_fear_{prim}']:>6.2f}",
+            "  MARKET:",
+            f"    {prim} price mean/max/{crisis}-max.. "
+            f"{d[f'mean_{prim}_price']:>5.2f} / {d[f'max_{prim}_price']:>5.2f} / {d[f'{crisis}_max_{prim}_price']:>5.2f}",
+            "  AIC ledger:",
+            f"    bounty paid out (total)......... {d['total_reward_paid']:>8.1f}",
             f"    hoarding penalty (total)........ {d['total_penalty']:>8.1f}"
-            f"   (flagged on {d['flag_days']} days)\n"
-            f"  PLAYER:\n"
-            f"    final money..................... {d['player_final_money']:>8.1f}\n"
-            f"    bounty earned (realized)........ {d['player_bonus_earned']:>8.1f}\n"
-        )
+            f"   (flagged on {d['flag_days']} days)",
+            "  PLAYER:",
+            f"    final money..................... {d['player_final_money']:>8.1f}",
+            f"    bounty earned (realized)........ {d['player_bonus_earned']:>8.1f}",
+        ]
+        return "\n".join(lines) + "\n"
 
     # ---------- plotting ----------
     def plot(self, path: str, title: str) -> bool:
@@ -133,29 +138,24 @@ class Metrics:
             return False
         s = self.series
         days = self.days
+        prim = self.primary
         fig, ax = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
         fig.suptitle(title)
-
-        ax[0].plot(days, s["wood_price"], label="wood price", color="saddlebrown")
-        ax[0].plot(days, s["food_price"], label="food price", color="green", alpha=0.6)
+        for r in self.consumables:
+            ax[0].plot(days, s[f"{r}_price"], label=f"{r} price")
         ax[0].set_ylabel("price"); ax[0].legend(loc="upper left")
-
-        ax[1].plot(days, s["wood_reserve"], label="aggregate wood reserve", color="saddlebrown")
-        ax[1].plot(days, s["wood_bounty"], label="AIC bounty (player channel)", color="orange")
-        ax[1].plot(days, [f * 50 for f in s["village_fear_wood"]],
+        ax[1].plot(days, s[f"{prim}_reserve"], label=f"aggregate {prim} reserve", color="saddlebrown")
+        ax[1].plot(days, s[f"{prim}_bounty"], label="AIC bounty (player channel)", color="orange")
+        ax[1].plot(days, [f * 50 for f in s[f"village_fear_{prim}"]],
                    label="avg village fear (x50)", color="purple", alpha=0.6)
         ax[1].set_ylabel("reserve / bounty / fear"); ax[1].legend(loc="upper left")
-
-        ax[2].bar(days, s["village_unmet_wood"], label="village unmet wood", color="red", width=1.0)
+        ax[2].bar(days, s[f"village_unmet_{prim}"], label=f"village unmet {prim}", color="red", width=1.0)
         ax[2].plot(days, s["reward_today"], label="bounty paid/day", color="blue", alpha=0.7)
         ax[2].set_ylabel("shortage / payout"); ax[2].set_xlabel("day"); ax[2].legend(loc="upper left")
-
-        # shade winters
-        for i, sea in enumerate(s["season"]):
-            if sea == Season.WINTER.value:
+        for i, ph in enumerate(s["season"]):
+            if ph == self.crisis:
                 for a in ax:
                     a.axvspan(days[i] - 0.5, days[i] + 0.5, color="steelblue", alpha=0.05)
-
         fig.tight_layout()
         fig.savefig(path, dpi=110)
         plt.close(fig)

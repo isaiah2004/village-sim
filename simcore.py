@@ -33,6 +33,11 @@ from world import World
 import contract as C
 
 
+def _rv(r):
+    """Render a resource id as a plain string (tolerates str-enum or bare str)."""
+    return r.value if hasattr(r, "value") else r
+
+
 class ContractStrategy(Strategy):
     """Player strategy that acts purely from externally submitted intents."""
     name = "contract"
@@ -229,6 +234,9 @@ class SimCore:
 
     def snapshot(self) -> C.Snapshot:
         w = self.world
+        sc = w.scenario
+        rids = list(w.resource_ids)
+        cons = list(w.consumable_ids)
         agents = []
         for a in w.agents:
             wl = next((x for x in getattr(a, "assets", []) if x.kind == "woodlot"), None)
@@ -241,11 +249,13 @@ class SimCore:
                 woodlots=1 if wl else 0,
                 woodlot_level=wl.level if wl else 0,
                 woodlot_output=round(self.cfg.woodlot_wood_output * wl.level, 3) if wl else 0.0,
+                holdings={_rv(r): round(a.qty(r), 4) for r in rids},
+                fears={_rv(r): round(a.fear(r), 4) for r in cons},
             ))
 
         st = w.accountant.state
         markets = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in cons:                              # per-consumable, driven by scenario data
             cl = w.last_clearings.get(r)
             markets.append(C.MarketView(
                 resource=r, ref_price=round(w.ref_price[r], 4),
@@ -272,7 +282,7 @@ class SimCore:
 
         vu = getattr(w, "village_unmet", {Resource.WOOD: 0.0, Resource.FOOD: 0.0})
         return C.Snapshot(
-            day=self._day, season=self.cfg.season_for_day(self._day).value,
+            day=self._day, season=w.driver.phase_name(self._day),
             agents=agents, markets=markets, problems=problems, loans=loans,
             village_unmet_wood=round(vu.get(Resource.WOOD, 0.0), 4),
             village_unmet_food=round(vu.get(Resource.FOOD, 0.0), 4),
@@ -280,6 +290,9 @@ class SimCore:
             total_contribution_paid=round(st.total_paid, 4),
             total_penalty=round(st.total_penalty, 4),
             done=self.done,
+            scenario=sc.name, primary_resource=_rv(sc.primary_resource),
+            consumables=tuple(_rv(r) for r in cons),
+            village_unmet={_rv(r): round(vu.get(r, 0.0), 4) for r in cons},
         )
 
     # ---------------- queries ----------------
@@ -328,13 +341,14 @@ class SimCore:
         (Layer 3): public reference prices, the merchant's own capital, the season,
         public facts, and the counterparty's reputation -- never the AIC fair value
         or hidden truth. This is what the (Scripted or LLM) merchant judges."""
-        from config import Season
         w = self.world
+        sc = w.scenario
         m = w.by_id.get(merchant_id)
-        ref = {r.value: round(w.ref_price[r], 4) for r in (Resource.WOOD, Resource.FOOD)}
-        season = self.cfg.season_for_day(self._day).value
-        dtw = self.cfg.days_until_season(self._day, Season.WINTER)
-        facts = ("winter is near",) if (season != "winter" and dtw <= 25) else ()
+        ref = {_rv(r): round(w.ref_price[r], 4) for r in w.consumable_ids}
+        season = w.driver.phase_name(self._day)
+        crisis = sc.crisis_phase
+        dtw = w.driver.days_until_phase(self._day, crisis)
+        facts = (f"{crisis} is near",) if (season != crisis and dtw <= 25) else ()
         return C.MerchantView(
             merchant_id=merchant_id,
             merchant_capital=round(m.money, 2) if m else 0.0,

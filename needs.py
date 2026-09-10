@@ -39,11 +39,18 @@ class Need:
     """
     key: str
     resource: Resource
-    requirement: dict          # Season -> per-agent units/day
+    requirement: dict          # phase-key -> per-agent units/day (Season enum or phase name)
     rewarded: bool = True
 
     def daily_requirement(self, cfg: Config, day: int) -> float:
-        """Per-agent units this need demands on `day` (its severity driver)."""
+        """Per-agent units this need demands on `day` (its severity driver). Keyed
+        by the active driver's phase (frostpine: the season); str-enum equality
+        lets a Season-keyed or phase-name-keyed requirement resolve the same."""
+        sc = getattr(cfg, "scenario", None)
+        phase = sc.driver.phase_name(day) if sc is not None else cfg.season_for_day(day)
+        if phase in self.requirement:
+            return self.requirement[phase]
+        # legacy fallback (Season-keyed requirement indexed by the enum season)
         return self.requirement[cfg.season_for_day(day)]
 
 
@@ -53,15 +60,27 @@ def _flat(value: float) -> dict:
 
 
 def build_registry(cfg: Config) -> list[Need]:
-    """Assemble the need registry from config DATA.
+    """Assemble the need registry from DATA.
 
-    Adding a need is a row here (data), never new logic in the index. Wood is
-    re-registered EXACTLY as it has always behaved (seasonal requirement, always
-    rewarded). Food is registered as a second need with the identical shape; it is
-    always priced like wood, and rewarded only when the owner opts in via
-    `cfg.reward_food_need` -- so the validated scenarios stay byte-identical until
-    someone deliberately turns food-as-rewarded-need on.
+    When a scenario is attached (the general path), needs come from the scenario:
+    each NeedSpec's requirement is the resource's base_consume x the driver's
+    per-phase consume multiplier -- pure data, any world's goods. Adding a need is
+    a NeedSpec row in the scenario, never logic here.
+
+    The legacy path (no scenario -- e.g. a bare Config() in a unit test) reproduces
+    the historical frostpine registry exactly, so byte-identity holds either way.
+    `cfg.reward_food_need` still forces food-as-rewarded on the legacy path.
     """
+    sc = getattr(cfg, "scenario", None)
+    if sc is not None:
+        needs = []
+        for ns in sc.needs:
+            rspec = sc.resource(ns.resource)
+            requirement = {ph.name: rspec.base_consume * ph.consume_mult.get(ns.resource, 1.0)
+                           for ph in sc.driver.phases}
+            rewarded = ns.rewarded or (ns.resource == "food" and cfg.reward_food_need)
+            needs.append(Need(ns.key, ns.resource, requirement, rewarded))
+        return needs
     return [
         Need("wood_heat", Resource.WOOD, dict(cfg.wood_per_day), rewarded=True),
         Need("food_hunger", Resource.FOOD, _flat(cfg.food_per_day),

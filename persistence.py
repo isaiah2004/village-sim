@@ -57,13 +57,13 @@ def _res(k):
 
 # ---------------------------------------------------------------- enum helpers
 def _res_keyed(d: dict) -> dict:
-    """{Resource: v} -> {str: v}"""
-    return {k.value: v for k, v in d.items()}
+    """{Resource|str: v} -> {str: v}"""
+    return {_rid(k): v for k, v in d.items()}
 
 
 def _res_unkey(d: dict) -> dict:
-    """{str: v} -> {Resource: v}"""
-    return {Resource(k): v for k, v in d.items()}
+    """{str: v} -> {Resource|str: v} (enum for core ids, plain string otherwise)"""
+    return {_res(k): v for k, v in d.items()}
 
 
 def _cfg_key_back(k):
@@ -185,14 +185,14 @@ def enc_agent(a) -> dict:
         "id": a.id,
         "money": a.money,
         "stamina": a.stamina,
-        "holdings": {r.value: [[lid, q] for lid, q in a.holdings[r]] for r in a.holdings},
-        "skill": {r.value: v for r, v in a.skill.items()},
+        "holdings": {_rid(r): [[lid, q] for lid, q in a.holdings[r]] for r in a.holdings},
+        "skill": {_rid(r): v for r, v in a.skill.items()},
         "tool_durability_left": a.tool_durability_left,
         "assets": [[x.kind, x.lot_id, x.built_tick, x.level] for x in a.assets],
         "loans": [[l.lender_id, l.principal, l.interest, l.term_days, l.struck_day,
                    l.balance, l.defaulted] for l in getattr(a, "loans", [])],
-        "perceived_scarcity": {r.value: v for r, v in a.perceived_scarcity.items()},
-        "unmet_need": {r.value: v for r, v in a.unmet_need.items()},
+        "perceived_scarcity": {_rid(r): v for r, v in a.perceived_scarcity.items()},
+        "unmet_need": {_rid(r): v for r, v in a.unmet_need.items()},
         "bonus_earned": a.bonus_earned,
         "daily_stamina": getattr(a, "daily_stamina", None),
     }
@@ -201,17 +201,18 @@ def enc_agent(a) -> dict:
 def dec_agent(a, d: dict) -> None:
     a.money = d["money"]
     a.stamina = d["stamina"]
-    a.holdings = {Resource(r): deque([lid, q] for lid, q in items)
+    slots = list(a.holdings.keys())       # resource ids the World gave this agent
+    a.holdings = {_res(r): deque([lid, q] for lid, q in items)
                   for r, items in d["holdings"].items()}
-    for r in Resource:                    # keep every resource slot present
+    for r in slots:                       # keep every scenario resource slot present
         a.holdings.setdefault(r, deque())
-    a.skill = {Resource(r): v for r, v in d["skill"].items()}
+    a.skill = {_res(r): v for r, v in d["skill"].items()}
     a.tool_durability_left = d["tool_durability_left"]
     a.assets = [Asset(kind, lid, bt, lvl) for kind, lid, bt, lvl in d["assets"]]
     a.loans = [Loan(lender, prin, intr, term, sday, bal, defd)
                for lender, prin, intr, term, sday, bal, defd in d.get("loans", [])]
-    a.perceived_scarcity = {Resource(r): v for r, v in d["perceived_scarcity"].items()}
-    a.unmet_need = {Resource(r): v for r, v in d["unmet_need"].items()}
+    a.perceived_scarcity = {_res(r): v for r, v in d["perceived_scarcity"].items()}
+    a.unmet_need = {_res(r): v for r, v in d["unmet_need"].items()}
     a.bonus_earned = d["bonus_earned"]
     if d.get("daily_stamina") is not None:
         a.daily_stamina = d["daily_stamina"]
@@ -290,9 +291,9 @@ def serialize_core(core) -> dict:
             "per_agent_unmet": {aid: _res_keyed(um)
                                 for aid, um in getattr(w, "_per_agent_unmet", {}).items()},
             "last_clearings": {
-                r.value: ([w.last_clearings[r].price, w.last_clearings[r].volume]
+                _rid(r): ([w.last_clearings[r].price, w.last_clearings[r].volume]
                           if w.last_clearings.get(r) else None)
-                for r in Resource
+                for r in w.resource_ids
             },
         },
         "lineage": enc_lineage(w.lineage),
@@ -348,8 +349,8 @@ def deserialize_core(core, data: dict) -> None:
     w._per_agent_unmet = {aid: _res_unkey(um)
                           for aid, um in wd.get("per_agent_unmet", {}).items()}
     w.last_clearings = {}
-    for r in Resource:
-        v = wd.get("last_clearings", {}).get(r.value)
+    for r in w.resource_ids:
+        v = wd.get("last_clearings", {}).get(_rid(r))
         w.last_clearings[r] = Clearing(r, v[0], v[1], []) if v else None
 
     dec_lineage(w.lineage, data["lineage"])

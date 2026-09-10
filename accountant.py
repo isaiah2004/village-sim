@@ -60,14 +60,16 @@ class Accountant:
         # config. All pricing and payout below is driven by this list, with no
         # per-resource branching, so a new need is a registry row, not new code.
         self.needs: list[Need] = build_registry(cfg)
+        _sc = getattr(cfg, "scenario", None)
+        _rids = list(_sc.resource_ids()) if _sc is not None else list(Resource)
+        _cons = _sc.consumable_ids() if _sc is not None else [Resource.WOOD, Resource.FOOD]
         self.state = AccountantState(
-            bounty={r: 0.0 for r in Resource},
-            fair_price={r: cfg.intrinsic_value[r] for r in Resource},
+            bounty={r: 0.0 for r in _rids},
+            fair_price={r: cfg.intrinsic_value.get(r, 0.0) for r in _rids},
         )
         # rolling estimate of daily production per resource (observed only)
         self._prod_ema = {
-            Resource.WOOD: cfg.n_villagers * cfg.base_yield[Resource.WOOD] * 0.4,
-            Resource.FOOD: cfg.n_villagers * cfg.base_yield[Resource.FOOD] * 0.4,
+            r: cfg.n_villagers * cfg.base_yield.get(r, 0.0) * 0.4 for r in _cons
         }
         # surveillance: track wood SALES (cleared) and HONEST OFFERS (sell orders
         # at reasonable prices). A genuine supplier shows at least one; a hoarder
@@ -92,9 +94,10 @@ class Accountant:
         self.state.paid_today = 0.0
         self.state.contrib_events = []
         if not self.cfg.accountant_enabled:
-            self.state.bounty = {r: 0.0 for r in Resource}
-            self.state.fair_price = {r: self.cfg.intrinsic_value[r] for r in Resource}
-            self.state.scarcity = {r: 0.0 for r in Resource}
+            _rids = list(self.cfg.scenario.resource_ids())
+            self.state.bounty = {r: 0.0 for r in _rids}
+            self.state.fair_price = {r: self.cfg.intrinsic_value.get(r, 0.0) for r in _rids}
+            self.state.scarcity = {r: 0.0 for r in _rids}
             return
         n = len(agents)
         driver = self.cfg.scenario.driver           # yield modulation is data (DESIGN.md)
@@ -216,12 +219,14 @@ class Accountant:
 
     def update_surveillance(self, agents: list, wood_price: float, unmet_wood: float = 0.0) -> None:
         """
-        Flag agents who hold a large wood stockpile while the village is in
-        scarcity AND who are not actively releasing it to the market. We look
-        at SALES (external release) rather than total stock change, so an
-        agent can't hide a hoard by burning some of it themselves.
+        Flag agents who hold a large stockpile of the crisis good while the
+        village is in scarcity AND who are not actively releasing it to the
+        market. We look at SALES (external release) rather than total stock
+        change, so an agent can't hide a hoard by burning some of it themselves.
+        The policed good is the scenario's primary resource (frostpine: wood).
         """
-        scarce = (wood_price > self.cfg.intrinsic_value[Resource.WOOD] * self.cfg.scarcity_price_mult
+        primary = self.cfg.scenario.primary_resource
+        scarce = (wood_price > self.cfg.intrinsic_value[primary] * self.cfg.scarcity_price_mult
                   or unmet_wood > 1e-6)
         self.state.hoard_flags = {}
         if not scarce:
@@ -230,7 +235,7 @@ class Accountant:
             # market makers are SUPPOSED to hold inventory -- don't flag them
             if ag.is_market_maker:
                 continue
-            stock = ag.qty(Resource.WOOD)
+            stock = ag.qty(primary)
             if stock <= self.cfg.hoard_stock_threshold:
                 continue
             sales = self._sales_ema.get(ag.id, 0.0)
@@ -246,10 +251,11 @@ class Accountant:
     def charge_holding_fees(self, agents: list) -> None:
         if not self.state.hoard_flags:
             return
+        primary = self.cfg.scenario.primary_resource
         for ag in agents:
             if ag.id not in self.state.hoard_flags:
                 continue
-            excess = ag.qty(Resource.WOOD) - self.cfg.hoard_stock_threshold
+            excess = ag.qty(primary) - self.cfg.hoard_stock_threshold
             if excess > 0:
                 fee = min(ag.money, excess * self.cfg.hoard_fee_rate)
                 ag.money -= fee

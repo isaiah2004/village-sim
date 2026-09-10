@@ -308,7 +308,7 @@ class Game:
         step = int((acc.h - 60) / 2)
         for r in (Resource.WOOD, Resource.FOOD):
             m = self.market(r)
-            self._text(r.value.upper(), self.f_h2, INK, acc.x + 14, y)
+            self._text((r.value if hasattr(r,'value') else r).upper(), self.f_h2, INK, acc.x + 14, y)
             self._text(f"market {m.ref_price:5.1f}", self.mono, MUTE, acc.x + 14, y + 26)
             self._text(f"fair   {m.fair_price:5.1f}", self.mono, EMBER, acc.x + 14, y + 44)
             if m.ref_price < m.fair_price * 0.85:

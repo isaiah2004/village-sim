@@ -81,7 +81,7 @@ class World:
         self._deals_today: list = []              # this day's AcceptDeal outcomes
         self._loan_events: list = []              # this day's loan repayments/defaults
         self.day = 0
-        self.ref_price = {r: cfg.intrinsic_value[r] for r in Resource}
+        self.ref_price = {r: cfg.intrinsic_value.get(r, 0.0) for r in self.resource_ids}
 
         # ----- spawn NPCs from the population registry -----
         # Default population: villagers + one Market Maker (the trading post)
@@ -110,7 +110,7 @@ class World:
         self.prop: PropagationEngine | None = None
         self.scheduled_injections: dict[int, list] = {}
         self.info_acts: list = []            # player-sourced info acts, for scoring
-        self.rumour_avg = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
+        self.rumour_avg = {r: 0.0 for r in self.consumable_ids}
         if cfg.propagation_enabled:
             # dedicated RNG so gossip shuffles never perturb the economic stream
             self.prop_rng = random.Random(cfg.seed ^ 0x5F3759DF)
@@ -121,8 +121,8 @@ class World:
         self._active_ids = {a.id for a in self.agents}
 
         # initialized empty so UI can read on day 0 before first market clearing
-        self.last_orders: dict = {r: [] for r in Resource}
-        self.last_clearings: dict = {r: None for r in Resource}
+        self.last_orders: dict = {r: [] for r in self.resource_ids}
+        self.last_clearings: dict = {r: None for r in self.resource_ids}
         self._player_money_at_day_start: float = self.player.money
         self._player_bonus_at_day_start: float = 0.0
 
@@ -137,12 +137,14 @@ class World:
         """
         for ag in self.agents:
             if ag.is_market_maker:
-                for r, qty in ((Resource.WOOD, 10.0), (Resource.FOOD, 10.0)):
+                for r in self.consumable_ids:
+                    qty = 10.0
                     lot = self.lineage.new_lot(r, "market", -1, "gather", qty)
                     ag.add_holding(lot.id, r, qty)
                 continue
-            for r in (Resource.WOOD, Resource.FOOD):
-                need = self.cfg.wood_per_day[Season.SPRING] if r == Resource.WOOD else self.cfg.food_per_day
+            for r in self.consumable_ids:
+                rspec = self.scenario.resource(r)
+                need = rspec.base_consume * self.driver.consume_mult(0, r)
                 qty = need * self.cfg.reserve_buffer_days
                 lot = self.lineage.new_lot(r, "nature", -1, "gather", qty)
                 ag.add_holding(lot.id, r, qty)
@@ -227,8 +229,9 @@ class World:
         self._consumption_phase()
         self._belief_update_phase()
         self.accountant.observe_sales(self._wood_sales_today)
-        self.accountant.update_surveillance(self.agents, self.ref_price[Resource.WOOD],
-                                            self.day_unmet[Resource.WOOD])
+        _primary = self.scenario.primary_resource
+        self.accountant.update_surveillance(self.agents, self.ref_price[_primary],
+                                            self.day_unmet.get(_primary, 0.0))
         self.accountant.charge_holding_fees(self.agents)
         self._loan_phase()
         self.metrics.record(self, self._villager_ctx)
@@ -240,12 +243,13 @@ class World:
     def _production_phase(self) -> None:
         # Note: stamina was refreshed in begin_day. Don't reset here -- that
         # would erase any decrements a Strategy made in decide_actions.
-        produced = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
+        produced = {r: 0.0 for r in self.consumable_ids}
         for ag in self.agents:
             ctx = self._ctx_for(ag)
             for action in ag.decide_actions(ctx):
                 if isinstance(action, GatherAction):
-                    produced[action.resource] += self._do_gather(ag, action.resource, ctx)
+                    produced[action.resource] = produced.get(action.resource, 0.0) \
+                        + self._do_gather(ag, action.resource, ctx)
                 elif isinstance(action, CraftToolAction):
                     self._do_craft_tool(ag, ctx)
                 elif isinstance(action, BuildWoodlotAction):
@@ -254,9 +258,12 @@ class World:
                     self._do_intervention(ag, action.key, ctx)
                 elif isinstance(action, AcceptDealAction):
                     self._do_accept_deal(ag, action, ctx)
-        # capital goods run AFTER labour: each woodlot yields wood (fed by upkeep food).
-        if self.cfg.capital_goods_enabled:
-            produced[Resource.WOOD] += self._run_woodlots()
+        # capital goods run AFTER labour: each capital good yields its output
+        # resource (frostpine's woodlot -> wood, fed by upkeep food). The output
+        # resource is data (scenario.capital), so this is not wood-specific.
+        if self.cfg.capital_goods_enabled and self.scenario.capital:
+            out_res = self.scenario.capital[0].output_resource
+            produced[out_res] = produced.get(out_res, 0.0) + self._run_woodlots()
         for r, q in produced.items():
             self.accountant.observe_production(r, q)
 
@@ -443,22 +450,23 @@ class World:
         self._settled: dict = {}
         # snapshot of today's order book + clearings so the UI can explain
         # why the player's orders did or didn't clear.
-        self.last_orders: dict = {r: [] for r in Resource}
-        self.last_clearings: dict = {r: None for r in Resource}
+        self.last_orders: dict = {r: [] for r in self.resource_ids}
+        self.last_clearings: dict = {r: None for r in self.resource_ids}
         orders = []
         for ag in self.agents:
             orders.extend(ag.make_orders(self._ctx_for(ag)))
         # Honest wood sell offers: sell orders at <= 1.5x current ref price.
         # (Fake offers at unreachable prices don't count -- prevents the
         # "post ask at 25 to look like a seller" exploit.)
-        honest_price_cap = self.ref_price[Resource.WOOD] * 1.5
+        primary = self.scenario.primary_resource        # anti-hoard watches the crisis good
+        honest_price_cap = self.ref_price[primary] * 1.5
         honest_offers = {a.id: 0.0 for a in self.agents}
         for o in orders:
-            if (o.resource == Resource.WOOD and o.side == "sell"
+            if (o.resource == primary and o.side == "sell"
                     and o.price <= honest_price_cap):
                 honest_offers[o.agent_id] += o.qty
         self.accountant.observe_honest_offers(honest_offers)
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in self.consumable_ids:
             res_orders = [o for o in orders if o.resource == r]
             self.last_orders[r] = res_orders
             demand = sum(o.qty for o in res_orders if o.side == "buy")
@@ -495,7 +503,7 @@ class World:
             pay = actually * t.price
             buyer.money -= pay
             seller.money += pay
-            if t.resource == Resource.WOOD:
+            if t.resource == self.scenario.primary_resource:
                 self._wood_sales_today[t.seller_id] = (
                     self._wood_sales_today.get(t.seller_id, 0.0) + actually
                 )
@@ -507,16 +515,16 @@ class World:
             bd["bought"] += actually; bd["bought_val"] += pay
 
     def _consumption_phase(self) -> None:
-        self.day_unmet = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
+        self.day_unmet = {r: 0.0 for r in self.consumable_ids}
         self.day_short_agents = 0
-        self.village_unmet = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}  # villagers only
+        self.village_unmet = {r: 0.0 for r in self.consumable_ids}  # villagers only
         self._per_agent_unmet = {}
         for ag in self.agents:
             ctx = self._ctx_for(ag)
             result = ag.consume_daily(ctx)
             short_today = False
-            own_unmet = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
-            for r in (Resource.WOOD, Resource.FOOD):
+            own_unmet = {r: 0.0 for r in self.consumable_ids}
+            for r in self.consumable_ids:
                 _, shortfall = result[r]
                 own_unmet[r] = shortfall
                 self.day_unmet[r] += shortfall
@@ -588,12 +596,13 @@ class World:
             if ag.is_player or ag.is_market_maker:
                 continue
             own = self._per_agent_unmet.get(ag.id, {})
-            for r in (Resource.WOOD, Resource.FOOD):
+            for r in self.consumable_ids:
                 felt = own.get(r, 0.0)
                 if felt > 1e-3:
-                    mag = min(1.0, felt / max(self.cfg.wood_per_day[self.cfg.season_for_day(self.day)]
-                                             if r == Resource.WOOD else self.cfg.food_per_day, 1e-6))
-                    self.prop.inject(ag.id, Claim(r, mag, True, f"witness:{ag.id}:{r.value}", self.day),
+                    need_r = self._villager_ctx.needs.get(r, 1.0)
+                    mag = min(1.0, felt / max(need_r, 1e-6))
+                    rid = r.value if hasattr(r, "value") else r
+                    self.prop.inject(ag.id, Claim(r, mag, True, f"witness:{ag.id}:{rid}", self.day),
                                      authority=1.0, day=self.day)
 
         # 2. scheduled injections (events / sources / player claims) for today
@@ -612,10 +621,10 @@ class World:
         for ag in self.agents:
             if ag.is_player or ag.is_market_maker:
                 continue
-            rumour = {r: self.prop.scarcity(ag.id, r) for r in (Resource.WOOD, Resource.FOOD)}
+            rumour = {r: self.prop.scarcity(ag.id, r) for r in self.consumable_ids}
             ag.update_belief(self._per_agent_unmet.get(ag.id, {}), _ZERO_UNMET, rumour=rumour, consumables=self.consumable_ids)
 
         villagers = [a for a in self.agents if not a.is_player and not a.is_market_maker]
         vids = {a.id for a in villagers}
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in self.consumable_ids:
             self.rumour_avg[r] = self.prop.avg_scarcity(r, vids)

@@ -30,6 +30,11 @@ from agents import Dependent, MarketMaker, SpawnSpec, Villager
 from config import Config, Resource
 
 
+def _rv(r):
+    """Resource id as a display string (tolerant of enum or string)."""
+    return r.value if hasattr(r, 'value') else r
+
+
 def make_config() -> Config:
     cfg = Config()
     cfg.years = 1.0
@@ -311,7 +316,7 @@ class GameSession:
         if not self.can_gather():
             return False
         self.core.submit(C.Gather(r)); self.stamina_used += 1
-        self.queued.append(f"gather {r.value}")
+        self.queued.append(f"gather {_rv(r)}")
         return True
 
     def build_woodlot(self) -> bool:
@@ -342,11 +347,11 @@ class GameSession:
             if qty <= 0.5:
                 return False
             self.core.submit(C.Trade(r, "sell", qty, px * 0.95))
-            self.queued.append(f"sell {qty:.0f} {r.value}")
+            self.queued.append(f"sell {qty:.0f} {_rv(r)}")
             self.pending_sell[r] = self.pending_sell.get(r, 0.0) + qty
             return True
         self.core.submit(C.Trade(r, "buy", 3.0, px * 1.15))
-        self.queued.append(f"buy 3 {r.value}")
+        self.queued.append(f"buy 3 {_rv(r)}")
         return True
 
     def fast_forward(self) -> None:
@@ -456,15 +461,15 @@ class GameSession:
             elif isinstance(ev, C.Settled):
                 if ev.side == "sell":
                     sold[ev.resource] = sold.get(ev.resource, 0.0) + ev.qty
-                    self._log(f"Sold {ev.qty:.0f} {ev.resource.value} for {ev.value:.0f}g "
+                    self._log(f"Sold {ev.qty:.0f} {_rv(ev.resource)} for {ev.value:.0f}g "
                               f"(@ {ev.value/max(ev.qty,1e-6):.1f}).", "sold")
                 else:
-                    self._log(f"Bought {ev.qty:.0f} {ev.resource.value} for {ev.value:.0f}g.", "bought")
+                    self._log(f"Bought {ev.qty:.0f} {_rv(ev.resource)} for {ev.value:.0f}g.", "bought")
         # tell the player when a sell order did NOT clear (and why)
         for r, req in self.pending_sell.items():
             unsold = req - sold.get(r, 0.0)
             if unsold > 0.5:
-                self._log(f"{unsold:.0f} {r.value} didn't sell -- no buyers (it isn't scarce now).", "unsold")
+                self._log(f"{unsold:.0f} {_rv(r)} didn't sell -- no buyers (it isn't scarce now).", "unsold")
         self.starving = self.starving + 1 if starved else 0
         if starved:
             self._log(f"You have no food -- STARVING ({self.starving}/{self.STARVE_DAYS} days).", "starving")

@@ -199,9 +199,42 @@ def _frostpine() -> Scenario:
     )
 
 
+# ================================================================= tidewater
+# A fisher village. Proves a DRIVER + RESOURCES are pure data: "Tides" behaves
+# like winter for its own values, with no new code. Fish is the crisis good (a
+# tide-driven catch that fails in storms); grain is the comfortable staple. Same
+# machinery as frostpine, different data.
+def _tidewater() -> Scenario:
+    tide = {"spring_run": 1.4, "summer": 1.0, "neap": 0.7, "storm": 0.2}
+    grain_tide = {"spring_run": 1.1, "summer": 1.2, "neap": 1.0, "storm": 0.9}
+    phases = tuple(
+        Phase(name=name, length=30,
+              yield_mult={"fish": tide[name], "grain": grain_tide[name]},
+              consume_mult={"fish": 1.0, "grain": 1.0})
+        for name in ("spring_run", "summer", "neap", "storm")
+    )
+    driver = Driver(name="tides", phases=phases)
+    resources = (
+        ResourceSpec("fish", intrinsic_value=5.0, consumable=True, base_yield=2.0, base_consume=1.0),
+        ResourceSpec("grain", intrinsic_value=6.0, consumable=True, base_yield=2.5, base_consume=1.0),
+    )
+    needs = (NeedSpec("fish_need", "fish", rewarded=True),
+             NeedSpec("grain_need", "grain", rewarded=False))
+    population = (PopSpec("villager", 8, "f"),                      # fishers
+                 PopSpec("dependent", 3, "n", kwargs={"produces": "grain"}),  # net-menders garden grain, can't fish
+                 PopSpec("market_maker", 1, "mk",
+                         kwargs={"daily_volume": 16.0, "target_inventory": 40.0}))
+    return Scenario(
+        name="tidewater", resources=resources, driver=driver, needs=needs,
+        market=MarketSpec("call_auction"), population=population,
+        primary_resource="fish", crisis_phase="storm",
+    )
+
+
 # The scenario registry -- add a world archetype by adding a builder here (data).
 _REGISTRY = {
     "frostpine": _frostpine,
+    "tidewater": _tidewater,
 }
 
 
@@ -220,12 +253,34 @@ def register_scenario(name: str, builder) -> None:
     _REGISTRY[name] = builder
 
 
+def build_population(sc: Scenario) -> list:
+    """Turn a scenario's PopSpec rows (archetype names + data) into SpawnSpecs.
+    Pure data mapping -- adding a population entry is a PopSpec, never code here."""
+    from agents import ARCHETYPES, SpawnSpec
+    specs = []
+    for ps in sc.population:
+        cls = ARCHETYPES.get(ps.archetype)
+        if cls is None:
+            raise KeyError(f"unknown archetype {ps.archetype!r}; known: {sorted(ARCHETYPES)}")
+        specs.append(SpawnSpec(cls, ps.count, ps.id_prefix, dict(ps.kwargs)))
+    return specs
+
+
+def make_world(name: str = "frostpine", player_strategy: str = "idle", **overrides):
+    """Build a fully-configured World for a named scenario (config + population all
+    from data). The headless entry point for running any scenario's loop."""
+    from world import World
+    cfg = make_config(name, **overrides)
+    return World(cfg, player_strategy=player_strategy, population=build_population(cfg.scenario))
+
+
 def make_config(name: str = "frostpine", **overrides) -> Config:
     """Build a Config for a named scenario. The Config carries `.scenario` so the
     world reads its axes generically. `overrides` set scalar Config fields (e.g.
     years, seed, flags) on top of the scenario's tunables."""
     sc = get_scenario(name)
     cfg = Config()
+    cfg.scenario_name = name                            # serialized, so a save reloads the right world
     cfg.scenario = sc                                   # the world reads axes from here
     # resource-keyed config maps, rebuilt from scenario data (byte-identical for frostpine)
     cfg.intrinsic_value = {r.id: r.intrinsic_value for r in sc.resources}

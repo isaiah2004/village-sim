@@ -99,13 +99,17 @@ class Accountant:
             self.state.fair_price = {r: self.cfg.intrinsic_value.get(r, 0.0) for r in _rids}
             self.state.scarcity = {r: 0.0 for r in _rids}
             return
-        n = len(agents)
         driver = self.cfg.scenario.driver           # yield modulation is data (DESIGN.md)
         # Price every registered need uniformly -- the need carries its own
         # requirement (severity source), so there is no per-resource logic here.
         for need in self.needs:
             r = need.resource
             reserves = sum(ag.qty(r) for ag in agents)
+            # count only the agents who actually hold this need: a universal need
+            # is every agent (frostpine, byte-identical); a demand-scoped need is
+            # just its consumers (e.g. one war quartermaster), so scarcity isn't
+            # inflated as if the whole town needed the good.
+            n = sum(1 for ag in agents if r in getattr(ag, "need_ids", ()))
             projected_consumption = self._projected_consumption(need, day, n)
             # The AIC's view of capacity is pessimistic so it doesn't behave as
             # a perfect oracle: it under-estimates how much villagers can produce.
@@ -232,8 +236,9 @@ class Accountant:
         if not scarce:
             return
         for ag in agents:
-            # market makers are SUPPOSED to hold inventory -- don't flag them
-            if ag.is_market_maker:
+            # market makers and off-town institutions are SUPPOSED to hold/absorb
+            # inventory -- don't flag them
+            if ag.is_market_maker or getattr(ag, "is_institution", False):
                 continue
             stock = ag.qty(primary)
             if stock <= self.cfg.hoard_stock_threshold:

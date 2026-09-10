@@ -92,10 +92,16 @@ class Driver:
 @dataclass(frozen=True)
 class NeedSpec:
     """A registered problem the index prices: unmet consumption of `resource`.
-    `rewarded` = does meeting it pay realized-effect contribution."""
+    `rewarded` = does meeting it pay realized-effect contribution.
+    `consumer` scopes WHO holds the need: "" = every agent (the universal village
+    need, the historical default); an archetype name (e.g. "buyer") = only agents
+    of that archetype consume the resource daily. This lets a world model a
+    DEMAND-side crisis -- a good that only a particular participant (a war
+    quartermaster, a plague apothecary) suddenly needs -- as pure data."""
     key: str
     resource: str
     rewarded: bool = True
+    consumer: str = ""
 
 
 @dataclass(frozen=True)
@@ -232,44 +238,91 @@ def _tidewater() -> Scenario:
 
 
 # ================================================================= guildhall
-# An adventurer town whose economy is stabilized by a GUILD (DESIGN.md's third
-# MVP world). Proves the MARKET MODEL is a data axis: MarketSpec.model == "guild"
-# means the guild hall posts a standing support bid -- it buys up to `quota`
-# potions at a capped `price` from the adventurers, putting a floor under their
-# takings when a big "delve" haul would otherwise flood the market and collapse
-# the price; supply beyond the quota overflows to the ordinary call auction.
-# Potions are the crisis good the townsfolk need; rations are the staple.
-def _guildhall() -> Scenario:
-    potion_yield = {"muster": 1.0, "delve": 2.0, "peril": 0.8, "rest": 1.1}
-    ration_yield = {"muster": 1.1, "delve": 1.0, "peril": 0.9, "rest": 1.1}
+# An adventurer city with a DEMAND-side crisis (DESIGN.md's third MVP world). An
+# adventurer town has no shortage of essentials, so the crisis is not a shortfall
+# -- it is a DEMAND EVENT that makes one adventuring good suddenly precious and
+# draws a NEW BUYER into the market. Here: WAR-PREP. The empire mobilizes and a
+# government QUARTERMASTER (an institutional buyer) enters the guild market during
+# a mobilization window, paying a PREMIUM for monster parts to arm the front. The
+# "need" the index prices is the FRONT's unmet demand; supplying it pays the
+# adventurers realized-effect contribution. Nothing about this is monster-parts
+# specific -- the plague variant below is the same machinery, different values.
+#
+# The demand event is DATA on two axes: (1) a DEMAND-side driver -- the phase
+# `consume_mult` on the good spikes (raising the *buyer's* need), never its yield;
+# (2) a demand-scoped need (`consumer="buyer"`) so only the quartermaster carries
+# it. The guild market is kept (our one non-standard market model) to prove even
+# it hosts a demand crisis + a new participant on data alone.
+def _demand_event(name: str, *, good: str, staple: str, producer_prefix: str,
+                  buyer_prefix: str, driver_name: str, phase_names: tuple,
+                  peak_phase: str, demand_curve: dict, premium: float,
+                  capacity: float, market: MarketSpec) -> Scenario:
+    """A demand-event world (DESIGN.md's guildhall shape), built entirely from
+    DATA. Adventurers/producers gather `good` for the market and consume none of
+    it; a `staple` is the universal need. A demand event -- expressed as the
+    driver's per-phase `consume_mult` on `good` (`demand_curve`) -- raises an
+    institutional buyer's need, drawing it into the market to pay a `premium`.
+    The buyer's need is demand-scoped (`consumer="buyer"`) and rewarded, so
+    supplying the event pays realized-effect contribution. War-prep and plague are
+    the same call with different values."""
     phases = tuple(
-        Phase(name=name, length=30,
-              yield_mult={"potion": potion_yield[name], "ration": ration_yield[name]},
-              consume_mult={"potion": 1.0, "ration": 1.0})
-        for name in ("muster", "delve", "peril", "rest")
+        Phase(name=n, length=30,
+              yield_mult={},                                  # demand-side: yields are steady
+              consume_mult={good: demand_curve[n], staple: 1.0})
+        for n in phase_names
     )
-    driver = Driver(name="expeditions", phases=phases)
-    # Potions come back from expeditions far faster than the town drinks them, so
-    # after a big delve their open-market price would collapse toward the hard
-    # floor -- the adventurers' pay evaporates. Rations are a balanced staple.
+    driver = Driver(name=driver_name, phases=phases)
     resources = (
-        ResourceSpec("potion", intrinsic_value=5.0, consumable=True, base_yield=3.2, base_consume=0.6),
-        ResourceSpec("ration", intrinsic_value=6.0, consumable=True, base_yield=2.5, base_consume=1.0),
+        ResourceSpec(good, intrinsic_value=5.0, consumable=True, base_yield=2.0, base_consume=1.0),
+        ResourceSpec(staple, intrinsic_value=6.0, consumable=True, base_yield=2.5, base_consume=1.0),
     )
-    needs = (NeedSpec("potion_need", "potion", rewarded=True),
-             NeedSpec("ration_need", "ration", rewarded=False))
-    population = (PopSpec("villager", 8, "a"),                       # adventurers
-                 PopSpec("dependent", 3, "t", kwargs={"produces": "ration"}),  # townsfolk
-                 PopSpec("market_maker", 1, "mk",                    # the guild hall
-                         kwargs={"daily_volume": 16.0, "target_inventory": 40.0}))
-    # the guild floor: buy up to 60 potions/day at 4.5 (below intrinsic 5.0) so a
-    # delve glut can't drive the price through the floor -- adventurers keep their pay.
-    market = MarketSpec("guild", params={"resource": "potion", "price": 4.5, "quota": 60.0})
+    needs = (
+        NeedSpec(f"{good}_demand", good, rewarded=True, consumer="buyer"),
+        NeedSpec(f"{staple}_need", staple, rewarded=False),
+    )
+    population = (
+        PopSpec("villager", 8, producer_prefix, kwargs={"produces": good, "produce_target": 8.0}),
+        PopSpec("dependent", 3, "t", kwargs={"produces": staple}),
+        PopSpec("market_maker", 1, "mk", kwargs={"daily_volume": 16.0, "target_inventory": 40.0}),
+        PopSpec("buyer", 1, buyer_prefix,
+                kwargs={"demand_good": good, "premium": premium, "capacity": capacity}),
+    )
     return Scenario(
-        name="guildhall", resources=resources, driver=driver, needs=needs,
+        name=name, resources=resources, driver=driver, needs=needs,
         market=market, population=population,
-        primary_resource="potion", crisis_phase="delve",
+        primary_resource=good, crisis_phase=peak_phase,
     )
+
+
+def _guildhall() -> Scenario:
+    # WAR-PREP: a quartermaster pays a premium for monster parts during "war".
+    # Kept on the GUILD market (our one non-standard model) to prove even it hosts
+    # a demand crisis + a new participant on data alone.
+    # war demand (40/day) deliberately outstrips what the town's adventurers can
+    # cut (~24/day), so the front runs a real deficit -- that unmet demand is the
+    # scarcity the index prices, paying whoever supplies the front.
+    return _demand_event(
+        "guildhall", good="monster_parts", staple="ration",
+        producer_prefix="a", buyer_prefix="q", driver_name="mobilization",
+        phase_names=("peace", "muster", "war", "aftermath"), peak_phase="war",
+        demand_curve={"peace": 0.0, "muster": 16.0, "war": 40.0, "aftermath": 0.0},
+        premium=1.8, capacity=50.0,
+        market=MarketSpec("guild", params={"resource": "monster_parts", "price": 4.0, "quota": 40.0}))
+
+
+# ================================================================ plaguewatch
+# The SECOND demand-event variant, PURE DATA -- the same _demand_event call with
+# different values. A sickness spreads and an APOTHECARY (the same institutional
+# buyer archetype) pays a premium for a HERB during the outbreak. It runs on the
+# ordinary CALL AUCTION, proving the demand crisis + new buyer are independent of
+# the guild market too. No new code -- just a scenario value.
+def _plaguewatch() -> Scenario:
+    return _demand_event(
+        "plaguewatch", good="herb", staple="grain",
+        producer_prefix="h", buyer_prefix="apo", driver_name="outbreak",
+        phase_names=("calm", "onset", "outbreak", "recovery"), peak_phase="outbreak",
+        demand_curve={"calm": 0.0, "onset": 14.0, "outbreak": 36.0, "recovery": 0.0},
+        premium=1.7, capacity=48.0, market=MarketSpec("call_auction"))
 
 
 # ================================================================= emberforge
@@ -324,6 +377,7 @@ _REGISTRY = {
     "frostpine": _frostpine,
     "tidewater": _tidewater,
     "guildhall": _guildhall,
+    "plaguewatch": _plaguewatch,
     "emberforge": _emberforge,
 }
 

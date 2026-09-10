@@ -139,12 +139,16 @@ named `Scenario` value in `scenario.py`; the sim, the index, and the contract re
 them generically with **no per-scenario branching**. `make_config(name)` /
 `make_world(name)` build a fully-configured world from a name. Four MVP worlds
 ship — **frostpine** (the byte-identical baseline), **tidewater** (a driver +
-resources are data), **guildhall** (an adventurer town; the market model is a data
-axis: a guild support bid floors adventurers' pay ≈ 5.5×), **emberforge** (multi-resource
-structural scarcity relieved by a generic capital good). The capital-goods system,
-the player's skill, agent inventories, metrics, problems, and the `found_mill`
-intervention were all generalized off scenario data while keeping frostpine
-**byte-identical** (`regression.py` now 13 scenarios / 183 metrics, the new worlds
+resources are data), **guildhall** (an adventurer town with a DEMAND-side crisis:
+a war quartermaster — a new `buyer` archetype — enters the guild market during a
+mobilization window and the index pays whoever supplies the front), **emberforge**
+(multi-resource structural scarcity relieved by a generic capital good). A fifth,
+**plaguewatch** (a plague apothecary on the call auction), is the demand event as
+pure data. The capital-goods system, the player's skill, agent inventories,
+metrics, problems, the `found_mill` intervention, per-consumer needs
+(`NeedSpec.consumer`), trade-good production (`produces`), and the demand-side
+driver were all generalized off scenario data while keeping frostpine
+**byte-identical** (`regression.py` now 14 scenarios / 197 metrics, the new worlds
 captured **additively** — frostpine's 140 untouched). The contract went **v1.4 →
 v1.5** (additive): `AgentView.holdings`/`.fears` and `Snapshot.scenario`/
 `.primary_resource`/`.consumables`/`.village_unmet` are generic resource-keyed

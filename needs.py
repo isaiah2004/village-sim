@@ -41,6 +41,7 @@ class Need:
     resource: Resource
     requirement: dict          # phase-key -> per-agent units/day (Season enum or phase name)
     rewarded: bool = True
+    consumer: str = ""         # "" = every agent (universal); else an archetype name
 
     def daily_requirement(self, cfg: Config, day: int) -> float:
         """Per-agent units this need demands on `day` (its severity driver). Keyed
@@ -79,7 +80,8 @@ def build_registry(cfg: Config) -> list[Need]:
             requirement = {ph.name: rspec.base_consume * ph.consume_mult.get(ns.resource, 1.0)
                            for ph in sc.driver.phases}
             rewarded = ns.rewarded or (ns.resource == "food" and cfg.reward_food_need)
-            needs.append(Need(ns.key, ns.resource, requirement, rewarded))
+            needs.append(Need(ns.key, ns.resource, requirement, rewarded,
+                              getattr(ns, "consumer", "")))
         return needs
     return [
         Need("wood_heat", Resource.WOOD, dict(cfg.wood_per_day), rewarded=True),

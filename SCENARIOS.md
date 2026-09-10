@@ -17,9 +17,9 @@ every scenario's numbers byte-for-byte).
 |---|---|---|
 | **Resources** | `ResourceSpec(id, intrinsic_value, consumable, base_yield, base_consume)` | The goods that exist. `consumable` goods deplete daily; capital goods (tools, infrastructure) don't. |
 | **Driver** | `Driver(name, phases=(Phase(name, length, yield_mult, consume_mult), …))` | The cyclical modulator (frostpine's seasons, tidewater's tides). Per-resource `yield_mult`/`consume_mult` per phase; missing entries default to 1.0. |
-| **Needs** | `NeedSpec(key, resource, rewarded)` | The problems the index prices. `rewarded` = does meeting it pay realized-effect contribution. |
-| **Market** | `MarketSpec(model, params)` | `"call_auction"` (the double auction) or `"guild"` (a support bid buys up to `params["quota"]` of `params["resource"]` at a capped `params["price"]`; overflow clears on the open auction). |
-| **Population** | `PopSpec(archetype, count, id_prefix, kwargs)` | Rows of agents. `archetype` maps to an agent class via `agents.ARCHETYPES` (`villager`, `dependent`, `market_maker`, `merchant`). |
+| **Needs** | `NeedSpec(key, resource, rewarded, consumer)` | The problems the index prices. `rewarded` = does meeting it pay realized-effect contribution. `consumer` scopes WHO holds the need: `""` = every agent (the universal village need); an archetype name = only that archetype (a **demand-side** need, e.g. only a war quartermaster needs monster parts). |
+| **Market** | `MarketSpec(model, params)` | `"call_auction"` (the double auction) or `"guild"` (a support bid buys up to `params["quota"]` of `params["resource"]` at a capped floor `params["price"]` and **exports** it — a buyer of last resort that floors producer income; it clears through the ordinary auction, so it steps aside whenever real demand lifts the price above the floor). |
+| **Population** | `PopSpec(archetype, count, id_prefix, kwargs)` | Rows of agents. `archetype` maps to an agent class via `agents.ARCHETYPES` (`villager`, `dependent`, `market_maker`, `merchant`, `buyer`). A `villager` given `kwargs={"produces": "<good>"}` gathers that TRADE GOOD for the market even if it does not consume it (an adventurer's monster parts). A `buyer` (`InstitutionBuyer`) is an off-town institution that enters the market during a demand window to buy `kwargs["demand_good"]` at a `kwargs["premium"]`. |
 | **Capital** | `CapitalSpec(kind, output_resource, output_per_level, upkeep_resource, upkeep_per_level, build_cost_resource, build_cost, max_level)` | A buildable asset that converts upkeep into output each day (frostpine's woodlot, emberforge's forge). |
 | **primary_resource / crisis_phase** | `str` | The crisis good and the peak-stress phase — used for metrics naming and the anti-hoard watch. |
 | **tunables** | `dict` | Scalar `Config` overrides (e.g. `{"capital_goods_enabled": True}`). |
@@ -94,8 +94,30 @@ safety net. A change to a shipped scenario's numbers is a real regression.
 |---|---|---|---|
 | **frostpine** | The baseline, byte-identical to the historical world. | wood / winter | Seasons; woodlot capital; the golden anchor. |
 | **tidewater** | A **driver + resources are pure data**. | fish / storm | Tide driver; grain staple; net-menders garden grain. |
-| **guildhall** | The **market model is a data axis**. | potion / delve | Adventurer town; a guild support bid floors adventurers' pay against a delve glut (takings ≈ 5.5× vs a plain auction). |
+| **guildhall** | The **market model is a data axis** + a **demand-side crisis**. | monster_parts / war | Adventurer city on the guild market. A war-prep **demand event** draws a government **quartermaster** (a new `buyer` archetype) who pays a premium for parts; the front's demand outstrips town supply, so the index pays the adventurers who supply it. |
 | **emberforge** | **Multi-resource structural scarcity relieved by capital**. | iron / war | Iron is gathered slower than consumed; a forge (built from ore, fuelled by charcoal) closes the gap. |
+
+`plaguewatch` is a **second demand event as pure data** — same machinery as
+guildhall, different values: a plague draws an **apothecary** who pays a premium
+for a herb, on the ordinary call auction (proving the demand crisis is independent
+of the guild market). `test_demand.py` adds a third (a festival vintner) at runtime
+to prove a demand event is one data entry with zero new logic.
+
+### Demand-event worlds (a crisis with no shortfall)
+
+Some worlds have no supply crisis — the crisis is a **demand event** that makes a
+good suddenly precious and draws a new buyer. Express it as data:
+1. a **demand-side driver** — a phase whose `consume_mult` on the good spikes
+   (raising the buyer's *need*, never the good's yield);
+2. a **demand-scoped need** — `NeedSpec(..., consumer="buyer")`, so only the
+   institution carries it (the town's residents never "need" the export good);
+3. a **producer** — `PopSpec("villager", …, kwargs={"produces": good})` gathers
+   the good for market without consuming it;
+4. an **institutional buyer** — `PopSpec("buyer", 1, …, kwargs={"demand_good": good, "premium": …, "capacity": …})`.
+
+Set the peak demand *above* the town's production capacity so the front runs a
+real deficit — that unmet demand is the scarcity the index prices. See
+`scenario._demand_event`, which builds guildhall and plaguewatch from one call.
 
 `test_modularity.py`'s **saltmarsh** (peat-cutters) is a fifth, throwaway world that
 exists only to prove the claim — it is defined in the test, not the registry.

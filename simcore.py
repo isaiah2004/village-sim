@@ -224,6 +224,8 @@ class SimCore:
     def _kind(self, a) -> str:
         if a.is_player:
             return "player"
+        if getattr(a, "is_institution", False):
+            return "institution"
         if a.is_market_maker:
             return "market_maker"
         if getattr(a, "is_dependent", False):

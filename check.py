@@ -39,6 +39,7 @@ STEPS = [
     ("interventions",        [sys.executable, "test_interventions.py"]),
     ("merchant negotiation", [sys.executable, "test_merchant.py"]),
     ("loans",                [sys.executable, "test_loans.py"]),
+    ("modularity",           [sys.executable, "test_modularity.py"]),
 ]
 
 

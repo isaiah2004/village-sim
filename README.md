@@ -93,7 +93,7 @@ numbers byte-for-byte.
 | `view_text.py` | Terminal **View** — a second body proving the skin is swappable. |
 | `persistence.py` | Full-fidelity JSON save/load for `SimCore`. |
 | `check.py` | The foundation gate: regression + conformance + persistence + unit tests. |
-| `regression.py` + `golden.json` | Golden-master safety net (13 scenarios, 183 metrics — frostpine's rows byte-identical). |
+| `regression.py` + `golden.json` | Golden-master safety net (14 scenarios, 197 metrics — frostpine's rows byte-identical). |
 | `test_*.py` | Behavioural + contract + persistence + `test_modularity.py` (the data-driven-world proof). |
 | `main.py`, `demo_knowledge.py` | Headless frostpine runners the golden master mirrors. |
 | `demo_scenarios.py` | A thin, scenario-agnostic body driving any world through the contract. |

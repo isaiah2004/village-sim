@@ -34,6 +34,18 @@ def _scenario_ids(cfg):
     return (list(sc.resource_ids()), list(sc.consumable_ids()))
 
 
+def _need_ids(cfg, archetype: str) -> list:
+    """The resources THIS archetype consumes daily (its needs). A NeedSpec with
+    consumer="" is universal (every agent); one scoped to an archetype attaches
+    only to that archetype. No scenario attached -> the frostpine defaults, where
+    both needs are universal, so every agent needs wood + food (byte-identical)."""
+    sc = getattr(cfg, "scenario", None)
+    if sc is None:
+        return [Resource.WOOD, Resource.FOOD]
+    return [ns.resource for ns in sc.needs
+            if ns.consumer == "" or ns.consumer == archetype]
+
+
 # ----- decisions the agent hands back to the World to execute -----
 @dataclass
 class GatherAction:
@@ -132,17 +144,28 @@ class Agent:
     is_player = False
     is_market_maker = False
     is_dependent = False
+    is_institution = False        # an off-town buyer (war front, plague ward) -- not a resident
+    archetype = "villager"        # the DATA name a NeedSpec.consumer can scope to
 
-    def __init__(self, agent_id: str, cfg: Config, rng):
+    def __init__(self, agent_id: str, cfg: Config, rng, produces=None, produce_target: float = 6.0):
         self.id = agent_id
         self.cfg = cfg
         self.rng = rng
         self.money = cfg.start_money
+        # an optional TRADE GOOD this agent gathers for the market even though it
+        # does not consume it (e.g. an adventurer's monster parts). Data-driven;
+        # None -> the historical behaviour (gather only to cover own needs + a
+        # profitable surplus). `produce_target` is how much to keep on hand to sell.
+        self.produces = produces
+        self.produce_target = produce_target
         # Resource buckets come from the scenario (DESIGN.md), so any world's goods
         # get holdings/skill/belief slots. The consumable order is stable, so the
         # per-consumable skill RNG draws happen in the same order -> byte-identical
         # for frostpine (wood then food).
         rids, cons = _scenario_ids(cfg)
+        # the goods THIS agent consumes daily (its needs) -- scoped by archetype,
+        # so a demand-side crisis good only burdens the participant who needs it.
+        self.need_ids = set(_need_ids(cfg, type(self).archetype))
         # holdings[resource] = deque of [lot_id, qty_remaining], oldest first
         self.holdings: dict = {r: deque() for r in rids}
         self.stamina = cfg.stamina_per_day
@@ -189,6 +212,8 @@ class Agent:
 
     # ---------- economic valuation ----------
     def daily_need(self, r, ctx: Ctx) -> float:
+        if r not in self.need_ids:             # this agent doesn't consume r
+            return 0.0
         if ctx.needs:
             return ctx.needs.get(r, 0.0)
         if r == Resource.WOOD:                 # legacy fallback (no scenario needs)
@@ -313,6 +338,12 @@ class Agent:
         worst = min(cover, key=lambda r: cover[r])
         if cover[worst] < self.cfg.reserve_buffer_days:
             return worst
+        # produce the trade good for the market (a good gathered to SELL, not to
+        # consume -- e.g. an adventurer's monster parts). Data-driven; None (the
+        # historical default) skips this, so existing scenarios are byte-identical.
+        if self.produces and self.produces in gatherable \
+                and self._projected_reserve(self.produces) < self.produce_target:
+            return self.produces
         best, best_profit = None, 0.0
         for r in gatherable:
             if self._projected_reserve(r) >= self.target_reserve(r, ctx) * self.cfg.surplus_gather_cap:
@@ -358,6 +389,7 @@ class Dependent(Villager):
     a cornered market shuts out.
     """
     is_dependent = True
+    archetype = "dependent"
 
     def __init__(self, agent_id, cfg, rng, money_mult: float = 1.2, produces="food", **kwargs):
         super().__init__(agent_id, cfg, rng)
@@ -405,6 +437,7 @@ class MarketMaker(Agent):
     treats the same as "nature": no one earns credit for sourcing through it).
     """
     is_market_maker = True
+    archetype = "market_maker"
 
     def __init__(self, agent_id: str, cfg: Config, rng,
                  spread: float = 0.05,
@@ -465,6 +498,8 @@ class Merchant(Agent):
     market.py / accountant.py / world.py / lineage.py needs to know they exist
     -- the existing systems treat them as just another agent.
     """
+    archetype = "merchant"
+
     def __init__(self, agent_id, cfg, rng, capital_mult: float = 4.0):
         super().__init__(agent_id, cfg, rng)
         self.money = cfg.start_money * capital_mult
@@ -502,6 +537,55 @@ class Merchant(Agent):
             if spec_qty > 0.1:
                 orders.append(Order(self.id, r, "buy", spec_qty, buy_below))
         return orders
+
+
+class InstitutionBuyer(Agent):
+    """
+    An off-town INSTITUTIONAL BUYER -- a demand-side crisis embodied as a
+    participant (DESIGN.md's guildhall as a demand event). A war quartermaster or
+    a plague apothecary that enters the market during a MOBILIZATION WINDOW and
+    pays a PREMIUM for one good. It is pure infrastructure; which good, how big a
+    premium, and how much it can absorb are DATA (kwargs). The window itself is
+    DATA too: the buyer's need for `demand_good` is a demand-scoped NeedSpec whose
+    per-phase requirement (the driver's consume_mult) is high only during the
+    event and zero otherwise -- so the buyer is active exactly when the world's
+    driver says the event is on.
+
+    It does not gather or reside in the town (excluded from village welfare and
+    hoard surveillance). It buys the good on the open market and CONSUMES it to
+    meet its need, which fires realized-effect contribution up the lineage to the
+    adventurers/players who supplied it -- the index rewarding those who serve the
+    front. Its 'yes' to a price never overrides the market; it just bids.
+    """
+    is_institution = True
+    archetype = "buyer"
+
+    def __init__(self, agent_id, cfg, rng, demand_good: str = "",
+                 premium: float = 1.6, capacity: float = 24.0, **kwargs):
+        super().__init__(agent_id, cfg, rng)
+        self.money = 1_000_000.0               # an institution, not a household
+        self.stamina = 0.0                     # does not gather
+        self.demand_good = demand_good
+        self.premium = premium                 # price it will pay, as a multiple of ref
+        self.capacity = capacity               # max units it bids for per active day
+
+    def decide_actions(self, ctx):
+        return []
+
+    def make_orders(self, ctx) -> list[Order]:
+        # only in the market during its event window: the window is exactly the
+        # phases where its (demand-scoped) need for the good is non-zero. It bids
+        # for what it will consume today (up to `capacity`) -- it does not stockpile,
+        # so its own holdings never mask the town's real supply/scarcity.
+        need = self.daily_need(self.demand_good, ctx)
+        if need <= 1e-9 or not self.demand_good:
+            return []
+        want = max(0.0, min(self.capacity, need) - self.qty(self.demand_good))
+        if want <= 1e-9:
+            return []
+        ref = ctx.ref_price.get(self.demand_good, self.cfg.intrinsic_value.get(self.demand_good, 1.0))
+        price = ref * self.premium
+        return [Order(self.id, self.demand_good, "buy", want, price)]
 
 
 # =====================================================================
@@ -660,6 +744,7 @@ STRATEGIES: dict = {
 class Player(Agent):
     """The human-player proxy. Behaviour is delegated to a `Strategy` object."""
     is_player = True
+    archetype = "player"
 
     def __init__(self, agent_id: str, cfg: Config, rng, strategy="responsive"):
         super().__init__(agent_id, cfg, rng)
@@ -719,4 +804,5 @@ ARCHETYPES: dict = {
     "dependent": Dependent,
     "market_maker": MarketMaker,
     "merchant": Merchant,
+    "buyer": InstitutionBuyer,
 }

@@ -37,6 +37,11 @@ import problems
 
 _ZERO_UNMET = {Resource.WOOD: 0.0, Resource.FOOD: 0.0}
 
+# the guild's price-support purchases (MarketSpec.model == 'guild') settle to this
+# reserved buyer id: the goods are EXPORTED (removed from circulation), never held
+# by any agent, so the guild floors producer income without hoarding supply.
+GUILD_SINK_ID = "__guild_sink__"
+
 
 class World:
     def __init__(
@@ -509,13 +514,14 @@ class World:
 
     def _guild_support_orders(self) -> list:
         """The guild market model (MarketSpec.model == 'guild') as DATA: the guild
-        hall (embodied by the market maker) posts a standing SUPPORT BID -- it
-        buys up to `quota` units of the covered good at a capped `price`, putting
-        a floor under producers. Supply beyond the quota overflows to the ordinary
-        call auction and clears at whatever the open book bears (the discount is
-        emergent). No effect for call_auction scenarios (returns nothing). Cleared
-        by the same CallMarket + _settle as every other order, so this is a
-        participant behaviour selected by data, not a per-scenario code path."""
+        hall posts a standing SUPPORT BID at a capped floor `price` for up to
+        `quota` units of the covered good. It clears through the ORDINARY auction,
+        so it only wins supply when the market price is at/below the floor (a
+        peacetime glut) and steps aside whenever real demand lifts the price above
+        it (the war window). Whatever it buys is EXPORTED (see GUILD_SINK_ID in
+        _settle) -- the guild is a buyer of last resort shipping goods away, NOT a
+        reseller whose stockpile would mask the town's true supply. No-op for
+        call_auction scenarios; a data-selected participant, not a scenario branch."""
         spec = self.scenario.market
         if spec.model != "guild":
             return []
@@ -525,13 +531,28 @@ class World:
         price = float(p.get("price", self.cfg.intrinsic_value.get(resource, 0.0)))
         if quota <= 1e-9 or price <= 1e-9:
             return []
-        guild = next((a for a in self.agents if a.is_market_maker), None)
-        if guild is None:
-            return []
-        return [Order(guild.id, resource, "buy", quota, price)]
+        return [Order(GUILD_SINK_ID, resource, "buy", quota, price)]
 
     def _settle(self, clearing) -> None:
         for t in clearing.trades:
+            if t.buyer_id == GUILD_SINK_ID:
+                # guild price-support: pay the seller at the floor and EXPORT the
+                # goods (they leave the economy -- no buyer holds them). This is
+                # what stops the support from masking the town's real supply.
+                seller = self.by_id[t.seller_id]
+                moved = seller.take(t.resource, t.qty)
+                actually = sum(q for _, q in moved)
+                if actually <= 1e-6:
+                    continue
+                pay = actually * t.price
+                seller.money += pay
+                if t.resource == self.scenario.primary_resource:
+                    self._wood_sales_today[t.seller_id] = (
+                        self._wood_sales_today.get(t.seller_id, 0.0) + actually)
+                sd = self._settled.setdefault(t.seller_id, {}).setdefault(
+                    t.resource, {"sold": 0.0, "sold_val": 0.0, "bought": 0.0, "bought_val": 0.0})
+                sd["sold"] += actually; sd["sold_val"] += pay
+                continue
             buyer, seller = self.by_id[t.buyer_id], self.by_id[t.seller_id]
             cost = t.qty * t.price
             if buyer.money < cost - 1e-6:
@@ -573,7 +594,7 @@ class World:
                 _, shortfall = result[r]
                 own_unmet[r] = shortfall
                 self.day_unmet[r] += shortfall
-                if not ag.is_player and not ag.is_market_maker:
+                if not ag.is_player and not ag.is_market_maker and not ag.is_institution:
                     self.village_unmet[r] += shortfall
                 if shortfall > 1e-6:
                     short_today = True

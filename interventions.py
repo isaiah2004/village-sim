@@ -105,10 +105,12 @@ def _target_severity(world, problem_key: str) -> float:
     return ps.severity if ps else 0.0
 
 
-def evaluate(world, agent, iv: Intervention) -> tuple[bool, str]:
+def evaluate(world, agent, iv: Intervention, extra_capital: float = 0.0) -> tuple[bool, str]:
     """Deterministic 'can the player acquire the means, and is it worth doing?' --
     the stand-in for the merchant's yes/no. Returns (accepted, reason). An LLM
-    merchant can later replace this at the edge; the sim still validates here."""
+    merchant can later replace this at the edge; the sim still validates here.
+    `extra_capital` lets a loan-financed deal (AcceptDeal) satisfy the capital
+    precondition with borrowed money rather than the agent's own cash."""
     if not world.cfg.interventions_enabled:
         return False, "interventions disabled"
     for flag in iv.requires:
@@ -119,8 +121,8 @@ def evaluate(world, agent, iv: Intervention) -> tuple[bool, str]:
     have = standing(agent)
     if have < iv.min_standing:
         return False, f"needs standing {iv.min_standing:.0f} (have {have:.0f})"
-    if agent.money < iv.capital_cost:
-        return False, f"needs capital {iv.capital_cost:.0f} (have {agent.money:.0f})"
+    if agent.money + extra_capital < iv.capital_cost:
+        return False, f"needs capital {iv.capital_cost:.0f} (have {agent.money + extra_capital:.0f})"
     return True, ""
 
 

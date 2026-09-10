@@ -181,15 +181,27 @@ in here) and **negotiation** (`interventions.evaluate`, today a deterministic
 merchant; an LLM merchant replaces it AT THE EDGE — proposes/judges, sim validates,
 never mutates state).
 
+**Layer 3 — merchant negotiation + loans (MVP built).** You fund an intervention
+by negotiating a loan with a merchant. `merchant.py` (edge) has the `Merchant`
+protocol, a deterministic `ScriptedMerchant` (used everywhere in `check.py`), an
+edge-only fail-closed `LLMMerchant` (cheap `claude-haiku-4-5`, strict tool output,
+cached persona), and `negotiate()` capped at **3 rounds**. The settled terms enter
+the sim as the additive `AcceptDeal` intent (**contract v1.3 → v1.4**; +
+`DealResolved`/`LoanUpdated` events, `MerchantView`/`LoanView` reads,
+`SimCore.merchant_view`/`reputation`), where `world._do_accept_deal` is the HARD
+gate and `world._loan_phase` services a deterministic `Loan` (`cfg.loans_enabled`,
+default off → **140 golden metrics byte-identical**). `demo_merchant.py` shows the
+loop; `test_merchant.py` + `test_loans.py` cover it (LLM stubbed, never live in
+tests). Full design + the assumed decisions:
+[docs/llm-merchant-negotiation.md](docs/llm-merchant-negotiation.md).
+
 **Layer 3 — what remains (frontier, the actual game):** more interventions in the
-library (dig a well, open a trade route, haul grain to a famine); the reputation
-model (deeds → `knowledge.py` propagation → standing); the AI-merchant negotiation
-at the edge (LLM proposes terms, sim validates); a real capital/loan mechanic. The
-**LLM-merchant negotiation step is scoped** in
-[docs/llm-merchant-negotiation.md](docs/llm-merchant-negotiation.md) — read it
-before building: the LLM stays at the edge (soft gate + terms), the sim is the hard
-gate, everything flag-gated so golden stays byte-identical. **Confirm scope with the
-owner before building the next big Layer-3 step.**
+library (dig a well, open a trade route, haul grain to a famine); **reputation via
+propagation** (deeds → `knowledge.py` → standing — the scope doc's step 4, the one
+piece of the merchant loop still on the contribution proxy); wiring negotiation into
+the interactive bodies (`game.py`/`view_text.py`); and, when a live model is wanted,
+enabling `LLMMerchant` in a body (it is edge-only and off in the sim). **Confirm
+scope with the owner before the next big Layer-3 step.**
 
 **Track A (make the loop fun) — done this track:** contribution made *felt* (the news feed names *who*
 you kept warm and *why* it was worth what it was — `ContributionDetail` event);

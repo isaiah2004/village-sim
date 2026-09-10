@@ -24,7 +24,7 @@ from collections import deque
 from dataclasses import fields as dc_fields
 
 import agents as A
-from agents import Asset, SpawnSpec
+from agents import Asset, Loan, SpawnSpec
 from config import Config, Resource, Season
 from contract import CONTRACT_VERSION
 from knowledge import Belief, Claim
@@ -178,6 +178,8 @@ def enc_agent(a) -> dict:
         "skill": {r.value: v for r, v in a.skill.items()},
         "tool_durability_left": a.tool_durability_left,
         "assets": [[x.kind, x.lot_id, x.built_tick, x.level] for x in a.assets],
+        "loans": [[l.lender_id, l.principal, l.interest, l.term_days, l.struck_day,
+                   l.balance, l.defaulted] for l in getattr(a, "loans", [])],
         "perceived_scarcity": {r.value: v for r, v in a.perceived_scarcity.items()},
         "unmet_need": {r.value: v for r, v in a.unmet_need.items()},
         "bonus_earned": a.bonus_earned,
@@ -195,6 +197,8 @@ def dec_agent(a, d: dict) -> None:
     a.skill = {Resource(r): v for r, v in d["skill"].items()}
     a.tool_durability_left = d["tool_durability_left"]
     a.assets = [Asset(kind, lid, bt, lvl) for kind, lid, bt, lvl in d["assets"]]
+    a.loans = [Loan(lender, prin, intr, term, sday, bal, defd)
+               for lender, prin, intr, term, sday, bal, defd in d.get("loans", [])]
     a.perceived_scarcity = {Resource(r): v for r, v in d["perceived_scarcity"].items()}
     a.unmet_need = {Resource(r): v for r, v in d["unmet_need"].items()}
     a.bonus_earned = d["bonus_earned"]

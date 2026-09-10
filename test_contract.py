@@ -47,6 +47,7 @@ def test_every_intent_type_is_accepted():
         C.Trade: C.Trade(Resource.WOOD, "sell", 1.0, 5.0),
         C.Speak: C.Speak(Resource.WOOD, 0.8, True, "test_root", authority=0.6),
         C.Perform: C.Perform("found_mill"),
+        C.AcceptDeal: C.AcceptDeal("found_mill", 100.0, 0.15, 60),
     }
     assert set(samples) == set(C.INTENT_TYPES), \
         "test does not cover every declared intent type"

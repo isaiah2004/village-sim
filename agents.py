@@ -45,12 +45,43 @@ class InterventionAction:
 
 
 @dataclass
+class AcceptDealAction:
+    """Conclude a negotiated loan-financed deal (Layer 3). The world hard-gates it,
+    records the loan, credits the principal, and applies the intervention effect.
+    Player-driven only."""
+    key: str
+    principal: float
+    interest: float
+    term_days: int
+    merchant_id: str
+
+
+@dataclass
 class Asset:
     """An owned, persistent capital good (not a consumable holding)."""
     kind: str            # "woodlot"
     lot_id: int          # its lineage lot, so realized-effect credit can flow through it
     built_tick: int
     level: int = 1       # upgradable; output and upkeep scale with level
+
+
+@dataclass
+class Loan:
+    """A negotiated debt: the merchant lent `principal` at `interest` (total
+    fraction over the term); the borrower repays `balance` in equal daily
+    installments over `term_days`. Deterministic sim state -- the LLM merchant
+    only negotiates the numbers; the sim enforces repayment and default."""
+    lender_id: str
+    principal: float
+    interest: float          # total interest as a fraction of principal
+    term_days: int
+    struck_day: int
+    balance: float           # remaining to repay; starts at principal*(1+interest)
+    defaulted: bool = False
+
+    @property
+    def per_day(self) -> float:
+        return round(self.principal * (1.0 + self.interest) / max(self.term_days, 1), 6)
 
 
 @dataclass
@@ -95,6 +126,7 @@ class Agent:
         }
         self.tool_durability_left = 0
         self.assets: list = []   # owned capital goods (woodlots, …)
+        self.loans: list = []    # outstanding debts (Loan); empty unless loans_enabled
         # ---- belief: perceived scarcity per resource (0..1ish). Drives panic-
         # buying / reserve targets. Updated from observed events, not the AIC.
         self.perceived_scarcity: dict[Resource, float] = {r: 0.0 for r in Resource}

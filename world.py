@@ -24,8 +24,9 @@ from __future__ import annotations
 import random
 
 from accountant import Accountant
-from agents import (Asset, BuildWoodlotAction, Ctx, CraftToolAction, GatherAction,
-                    InterventionAction, MarketMaker, Player, SpawnSpec, Villager)
+from agents import (AcceptDealAction, Asset, BuildWoodlotAction, Ctx, CraftToolAction,
+                    GatherAction, InterventionAction, Loan, MarketMaker, Player,
+                    SpawnSpec, Villager)
 from config import Config, Resource, Season
 from knowledge import Claim, PropagationEngine, SocialGraph
 from lineage import LineageGraph
@@ -66,6 +67,8 @@ class World:
         # unless a body submits a Perform intent AND cfg.interventions_enabled.
         self.interventions = {iv.key: iv for iv in interventions.build_library(cfg)}
         self._interventions_today: list = []      # this day's attempts, for events
+        self._deals_today: list = []              # this day's AcceptDeal outcomes
+        self._loan_events: list = []              # this day's loan repayments/defaults
         self.day = 0
         self.ref_price = {r: cfg.intrinsic_value[r] for r in Resource}
 
@@ -195,6 +198,8 @@ class World:
         # accountant's scarcity signal is now fresh). Pure read -- no sim effect.
         problems.refresh(self.problems, self)
         self._interventions_today = []       # reset the day's intervention attempts
+        self._deals_today = []               # reset the day's deal outcomes
+        self._loan_events = []               # reset the day's loan repayments/defaults
 
     def execute_day(self) -> None:
         """Run today's production -> market -> consumption -> belief -> surveillance."""
@@ -206,6 +211,7 @@ class World:
         self.accountant.update_surveillance(self.agents, self.ref_price[Resource.WOOD],
                                             self.day_unmet[Resource.WOOD])
         self.accountant.charge_holding_fees(self.agents)
+        self._loan_phase()
         self.metrics.record(self, self._villager_ctx)
 
     def _ctx_for(self, ag):
@@ -227,6 +233,8 @@ class World:
                     self._do_build_woodlot(ag, ctx)
                 elif isinstance(action, InterventionAction):
                     self._do_intervention(ag, action.key, ctx)
+                elif isinstance(action, AcceptDealAction):
+                    self._do_accept_deal(ag, action, ctx)
         # capital goods run AFTER labour: each woodlot yields wood (fed by upkeep food).
         if self.cfg.capital_goods_enabled:
             produced[Resource.WOOD] += self._run_woodlots()
@@ -270,6 +278,79 @@ class World:
             return
         accepted, spent, reason = interventions.perform(self, ag, iv, ctx.day)
         self._interventions_today.append((ag.id, key, accepted, spent, iv.targets, reason))
+
+    def _do_accept_deal(self, ag, action, ctx: Ctx) -> None:
+        """Conclude a negotiated loan-financed deal (Layer 3), the HARD gate. Terms
+        arrive already negotiated (edge-side); the sim clamps them, re-checks the
+        intervention's preconditions and the merchant's capital, records the loan,
+        credits the principal, and applies the authored effect -- or rejects with a
+        reason. A negotiated 'yes' can never override a failed precondition here."""
+        key, mid = action.key, action.merchant_id
+        principal = max(0.0, float(action.principal))
+        interest = max(0.0, min(float(action.interest), self.cfg.loan_max_interest))   # clamp
+        term = max(1, min(int(action.term_days), self.cfg.loan_max_term_days))         # clamp
+
+        def reject(reason):
+            self._deals_today.append((ag.id, mid, key, False, 0.0, 0.0, 0, reason))
+
+        if not self.cfg.interventions_enabled:
+            return reject("interventions disabled")
+        if not self.cfg.loans_enabled:
+            return reject("loans disabled")
+        iv = self.interventions.get(key)
+        if iv is None:
+            return reject("unknown intervention")
+        merchant = self.by_id.get(mid)
+        if merchant is None or not merchant.is_market_maker:
+            return reject("no such merchant")
+        if merchant.money < principal:
+            return reject("merchant lacks capital")
+        # non-capital preconditions still hold; the loan supplies the capital.
+        ok, reason = interventions.evaluate(self, ag, iv, extra_capital=principal)
+        if not ok:
+            return reject(reason)
+        # strike: the merchant lends, the borrower records the debt, the effect fires.
+        merchant.money -= principal
+        ag.money += principal
+        loan = Loan(mid, principal, interest, term, ctx.day, balance=round(principal * (1.0 + interest), 6))
+        ag.loans.append(loan)
+        accepted, _spent, r2 = interventions.perform(self, ag, iv, ctx.day)
+        if not accepted:                       # unwind if the effect somehow fails
+            ag.money -= principal
+            merchant.money += principal
+            ag.loans.pop()
+            return reject(r2 or "intervention failed")
+        self._deals_today.append((ag.id, mid, key, True, principal, interest, term, ""))
+
+    def _loan_phase(self) -> None:
+        """Deterministic daily loan servicing (Layer 3). Each active loan takes an
+        equal installment; a borrower who cannot pay defaults (the lender seizes
+        what cash it can toward the balance, and the loan is marked defaulted -- a
+        black mark the reputation model will later propagate). No-op when disabled,
+        so validated scenarios stay byte-identical."""
+        if not self.cfg.loans_enabled:
+            return
+        for ag in self.agents:
+            for loan in ag.loans:
+                if loan.defaulted or loan.balance <= 1e-9:
+                    continue
+                pay = min(loan.per_day, loan.balance)
+                lender = self.by_id.get(loan.lender_id)
+                if ag.money + 1e-9 >= pay:
+                    ag.money -= pay
+                    loan.balance = round(loan.balance - pay, 6)
+                    if lender is not None:
+                        lender.money += pay
+                    kind = "paid_off" if loan.balance <= 1e-9 else "repaid"
+                    self._loan_events.append((ag.id, loan.lender_id, kind, round(pay, 6), loan.balance))
+                else:
+                    seized = max(0.0, ag.money)          # can't make the installment -> default
+                    ag.money -= seized
+                    if lender is not None:
+                        lender.money += seized
+                    loan.balance = round(max(0.0, loan.balance - seized), 6)
+                    loan.defaulted = True
+                    self._loan_events.append((ag.id, loan.lender_id, "defaulted", round(seized, 6), loan.balance))
 
     def _run_woodlots(self) -> float:
         """

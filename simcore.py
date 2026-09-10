@@ -26,7 +26,7 @@ yields the same run.
 """
 from __future__ import annotations
 
-from agents import (BuildWoodlotAction, CraftToolAction, GatherAction,
+from agents import (AcceptDealAction, BuildWoodlotAction, CraftToolAction, GatherAction,
                     InterventionAction, Order, Strategy)
 from config import Config, Resource
 from world import World
@@ -125,6 +125,10 @@ class SimCore:
             self._strategy.q_actions.append(BuildWoodlotAction())
         elif isinstance(intent, C.Perform):
             self._strategy.q_actions.append(InterventionAction(intent.key))
+        elif isinstance(intent, C.AcceptDeal):
+            self._strategy.q_actions.append(AcceptDealAction(
+                intent.key, intent.principal, intent.interest, intent.term_days,
+                intent.merchant_id))
         elif isinstance(intent, C.Trade):
             self._strategy.q_orders.append(
                 Order(agent_id, intent.resource, intent.side, intent.qty, intent.price))
@@ -195,6 +199,13 @@ class SimCore:
         for (aid, key, accepted, spent, target, reason) in getattr(w, "_interventions_today", ()):
             self._events.append(C.InterventionPerformed(
                 aid, key, accepted, round(spent, 4), target, reason))
+        # negotiated deals resolved this day (Layer 3) at the sim's hard gate
+        for (aid, mid, key, struck, principal, interest, term, reason) in getattr(w, "_deals_today", ()):
+            self._events.append(C.DealResolved(
+                aid, mid, key, struck, round(principal, 4), round(interest, 4), term, reason))
+        # loan servicing this day (repayment / pay-off / default)
+        for (aid, lid, event, payment, balance) in getattr(w, "_loan_events", ()):
+            self._events.append(C.LoanUpdated(aid, lid, event, round(payment, 4), round(balance, 4)))
         # knowledge network readout
         if w.prop is not None:
             vids = {a.id for a in w.agents if not a.is_player and not a.is_market_maker}
@@ -250,10 +261,19 @@ class SimCore:
             for ps in getattr(w, "problems", [])
         ]
 
+        loans = []
+        for a in w.agents:
+            for ln in getattr(a, "loans", []):
+                loans.append(C.LoanView(
+                    agent_id=a.id, lender_id=ln.lender_id, principal=round(ln.principal, 4),
+                    interest=round(ln.interest, 4), balance=round(ln.balance, 4),
+                    term_days=ln.term_days, struck_day=ln.struck_day,
+                    per_day=round(ln.per_day, 4), defaulted=ln.defaulted))
+
         vu = getattr(w, "village_unmet", {Resource.WOOD: 0.0, Resource.FOOD: 0.0})
         return C.Snapshot(
             day=self._day, season=self.cfg.season_for_day(self._day).value,
-            agents=agents, markets=markets, problems=problems,
+            agents=agents, markets=markets, problems=problems, loans=loans,
             village_unmet_wood=round(vu.get(Resource.WOOD, 0.0), 4),
             village_unmet_food=round(vu.get(Resource.FOOD, 0.0), 4),
             shortage_agents=getattr(w, "day_short_agents", 0),
@@ -290,6 +310,37 @@ class SimCore:
         import interventions
         a = self.world.by_id.get(agent_id)
         return interventions.standing(a) if a else 0.0
+
+    def reputation(self, agent_id: str = "PLAYER") -> C.ReputationSummary:
+        """The agent's standing plus a plain-language band, for merchant negotiation
+        (Layer 3). Today standing = realized contribution; the descriptor is what a
+        merchant prompt uses instead of the raw number."""
+        import interventions
+        a = self.world.by_id.get(agent_id)
+        s = interventions.standing(a) if a else 0.0
+        d = ("unproven" if s < 40 else "known" if s < 200
+             else "trusted" if s < 600 else "renowned")
+        return C.ReputationSummary(standing=round(s, 4), descriptor=d)
+
+    def merchant_view(self, key: str, principal: float, interest: float, term_days: int,
+                      merchant_id: str = "mk00", agent_id: str = "PLAYER") -> C.MerchantView:
+        """The knowledge-gated projection a merchant reasons over for a proposal
+        (Layer 3): public reference prices, the merchant's own capital, the season,
+        public facts, and the counterparty's reputation -- never the AIC fair value
+        or hidden truth. This is what the (Scripted or LLM) merchant judges."""
+        from config import Season
+        w = self.world
+        m = w.by_id.get(merchant_id)
+        ref = {r.value: round(w.ref_price[r], 4) for r in (Resource.WOOD, Resource.FOOD)}
+        season = self.cfg.season_for_day(self._day).value
+        dtw = self.cfg.days_until_season(self._day, Season.WINTER)
+        facts = ("winter is near",) if (season != "winter" and dtw <= 25) else ()
+        return C.MerchantView(
+            merchant_id=merchant_id,
+            merchant_capital=round(m.money, 2) if m else 0.0,
+            ref_prices=ref, season=season, reputation=self.reputation(agent_id),
+            public_facts=facts, key=key, principal=round(principal, 4),
+            interest=round(interest, 4), term_days=term_days)
 
     def interventions(self, agent_id: str = "PLAYER") -> list:
         """The pre-authored action library as an agent sees it now: each entry is

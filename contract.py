@@ -38,16 +38,22 @@ from config import Resource, Season
 #   1.3 (2026-09-06) additive: Perform intent + InterventionPerformed event --
 #       Layer 3's pre-authored world-changes. Minor bump; older bodies never
 #       submit Perform and safely ignore the new event type.
-CONTRACT_VERSION = "1.3"
+#   1.4 (2026-09-10) additive: AcceptDeal intent; DealResolved + LoanUpdated
+#       events; MerchantView/ReputationSummary reads; LoanView + Snapshot.loans --
+#       Layer 3's merchant negotiation + loan financing. Minor bump; older bodies
+#       never submit AcceptDeal, ignore the new events, and skip the new reads.
+CONTRACT_VERSION = "1.4"
 
 __all__ = [
     "CONTRACT_VERSION", "Resource", "Season",
-    "Gather", "CraftTool", "BuildWoodlot", "Trade", "Speak", "Perform",
+    "Gather", "CraftTool", "BuildWoodlot", "Trade", "Speak", "Perform", "AcceptDeal",
     "Intent", "INTENT_TYPES",
     "DayAdvanced", "Produced", "TradeCleared", "Settled", "ContributionPaid",
     "ContributionDetail", "Shortage", "HoardFlagged", "HoldingFee", "AssetBuilt",
-    "BeliefState", "InterventionPerformed", "Event", "EVENT_TYPES",
-    "AgentView", "MarketView", "ProblemView", "Snapshot",
+    "BeliefState", "InterventionPerformed", "DealResolved", "LoanUpdated",
+    "Event", "EVENT_TYPES",
+    "AgentView", "MarketView", "ProblemView", "ReputationSummary", "MerchantView",
+    "LoanView", "Snapshot",
 ]
 
 
@@ -109,11 +115,28 @@ class Perform:
     key: str
 
 
+@dataclass
+class AcceptDeal:
+    """Conclude a negotiated deal: take a loan of `principal` at `interest` (total
+    fraction over the term) over `term_days` from `merchant_id`, to fund
+    intervention `key`. A body submits this after a negotiation (deterministic
+    ScriptedMerchant, or the edge LLMMerchant) has settled terms. The sim is the
+    HARD gate: it re-checks the intervention's non-capital preconditions and the
+    merchant's capital, clamps the terms, records the loan, credits the principal,
+    and applies the authored effect -- or rejects with a reason. Either way it
+    emits a DealResolved event. The LLM's 'yes' never overrides this."""
+    key: str
+    principal: float
+    interest: float
+    term_days: int
+    merchant_id: str = "mk00"
+
+
 # The closed set of intents a body may submit. This tuple IS the contract's
 # surface for external control -- the conformance test asserts SimCore.submit()
 # accepts every type in it and nothing outside it.
-INTENT_TYPES = (Gather, CraftTool, BuildWoodlot, Trade, Speak, Perform)
-Intent = Union[Gather, CraftTool, BuildWoodlot, Trade, Speak, Perform]
+INTENT_TYPES = (Gather, CraftTool, BuildWoodlot, Trade, Speak, Perform, AcceptDeal)
+Intent = Union[Gather, CraftTool, BuildWoodlot, Trade, Speak, Perform, AcceptDeal]
 
 
 # ======================================================================
@@ -221,17 +244,44 @@ class InterventionPerformed:
     reason: str               # "" on success; else why it was rejected
 
 
+@dataclass
+class DealResolved:
+    """Outcome of an AcceptDeal at the sim's hard gate. struck=True means the loan
+    was recorded, the principal credited, and the intervention performed; else
+    `reason` says why the deal fell through (the merchant's 'yes' cannot override
+    a failed precondition)."""
+    agent_id: str
+    merchant_id: str
+    key: str
+    struck: bool
+    principal: float
+    interest: float
+    term_days: int
+    reason: str               # "" if struck; else why rejected
+
+
+@dataclass
+class LoanUpdated:
+    """A loan's state changed this step: a scheduled repayment, a full pay-off, or
+    a default (the borrower could not make the payment)."""
+    agent_id: str
+    lender_id: str
+    event: str                # "repaid" | "paid_off" | "defaulted"
+    payment: float            # money moved this step (0 on default)
+    balance: float            # remaining balance after this step
+
+
 # The closed set of events the world emits. The conformance test asserts every
 # event drained from a live run is an instance of one of these.
 EVENT_TYPES = (
     DayAdvanced, Produced, TradeCleared, Settled, ContributionPaid,
     ContributionDetail, Shortage, HoardFlagged, HoldingFee, AssetBuilt, BeliefState,
-    InterventionPerformed,
+    InterventionPerformed, DealResolved, LoanUpdated,
 )
 Event = Union[
     DayAdvanced, Produced, TradeCleared, Settled, ContributionPaid,
     ContributionDetail, Shortage, HoardFlagged, HoldingFee, AssetBuilt, BeliefState,
-    InterventionPerformed,
+    InterventionPerformed, DealResolved, LoanUpdated,
 ]
 
 
@@ -280,12 +330,55 @@ class ProblemView:
 
 
 @dataclass
+class ReputationSummary:
+    """What a merchant has come to know of an agent's track record -- the gate
+    input for negotiation. `standing` is the numeric measure (today: realized
+    contribution); `descriptor` is the plain-language band a prompt can use."""
+    standing: float
+    descriptor: str           # "unproven" | "known" | "trusted" | "renowned"
+
+
+@dataclass
+class MerchantView:
+    """The deliberately PARTIAL projection a merchant reasons over (knowledge-
+    gating by construction): public market prices, the merchant's own capital, the
+    season, public facts, and the counterparty's reputation -- never the AIC fair
+    value or any hidden world truth. Carries the proposal currently on the table."""
+    merchant_id: str
+    merchant_capital: float
+    ref_prices: dict          # resource.value -> public reference price
+    season: str
+    reputation: ReputationSummary
+    public_facts: tuple       # short public strings (e.g. "winter is near")
+    # the proposal on the table this round:
+    key: str
+    principal: float
+    interest: float
+    term_days: int
+
+
+@dataclass
+class LoanView:
+    """A borrower's outstanding loan (read-only render state)."""
+    agent_id: str
+    lender_id: str
+    principal: float
+    interest: float
+    balance: float
+    term_days: int
+    struck_day: int
+    per_day: float
+    defaulted: bool
+
+
+@dataclass
 class Snapshot:
     day: int
     season: str
     agents: list = field(default_factory=list)     # list[AgentView]
     markets: list = field(default_factory=list)    # list[MarketView]
     problems: list = field(default_factory=list)   # list[ProblemView] (Layer 1)
+    loans: list = field(default_factory=list)      # list[LoanView] (Layer 3 financing)
     village_unmet_wood: float = 0.0
     village_unmet_food: float = 0.0
     shortage_agents: int = 0

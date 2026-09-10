@@ -183,6 +183,16 @@ class Config:
     # never perform one and stay byte-identical; a body/demo opts in.
     interventions_enabled: bool = False
 
+    # ----- loans / capital (Layer 3: financing an intervention via a merchant) -----
+    # A merchant may lend capital to fund an intervention; the borrower repays
+    # principal + interest over a term, and defaults if they can't. Deterministic
+    # sim state -- the LLM merchant only negotiates the numbers; the sim enforces
+    # them. OFF by default so validated scenarios never take a loan and stay
+    # byte-identical.
+    loans_enabled: bool = False
+    loan_max_interest: float = 0.6    # the sim clamps any negotiated interest to this
+    loan_max_term_days: int = 120     # and the term to this
+
     # ----- AI Accountant (observer, not planner) -----
     accountant_enabled: bool = True
     # How realized contribution is PRICED when your resource meets someone else's

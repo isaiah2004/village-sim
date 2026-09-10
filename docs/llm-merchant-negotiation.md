@@ -1,15 +1,50 @@
-# Scope — LLM merchant negotiation (Layer 3, the edge)
+# LLM merchant negotiation (Layer 3, the edge)
 
-Status: **proposal / not built.** This scopes the next Layer‑3 step from
-[DESIGN.md](../DESIGN.md) — the AI‑agent negotiation in the mill worked example —
-so the owner can approve the shape before any code lands. It is written to obey
-the non‑negotiables in [AGENTS.md](../AGENTS.md) §1 and DESIGN.md's closing rule:
-**the LLM lives only at the edges, never holds quantitative state or mutates world
-truth; the authored causal model is load‑bearing, the LLM proposes, the sim
-validates.**
+Status: **MVP built (2026‑09‑10).** Steps 1–3 of the build order below are
+implemented, tested, and green; the LLM edge adapter is wired and fail‑closed but
+not run in any deterministic test. Step 4 (reputation‑via‑propagation) remains the
+frontier. This document is now both the design rationale *and* the record of what
+shipped. It obeys the non‑negotiables in [AGENTS.md](../AGENTS.md) §1 and
+DESIGN.md's closing rule: **the LLM lives only at the edges, never holds
+quantitative state or mutates world truth; the authored causal model is
+load‑bearing, the LLM proposes, the sim validates.** Every piece is flag‑gated off
+by default, so the 140 golden metrics stay byte‑identical.
 
-Nothing here changes the sim yet. When built, every piece is flag‑gated off by
-default so the 140 golden metrics stay byte‑identical.
+## Built (MVP) — what shipped and the decisions taken
+
+- **`merchant.py` (edge):** `DealProposal` / `MerchantDecision` / `DealOutcome`,
+  the `Merchant` protocol, `ScriptedMerchant` (deterministic; used everywhere in
+  `check.py`), `LLMMerchant` (edge‑only), and `negotiate()` — capped at **3 merchant
+  evaluations** (`MAX_ROUNDS = 3`, so ≤3 LLM calls). Accepting a counter costs no
+  extra call.
+- **Loan mechanic (sim):** `Loan` on the agent, `world._loan_phase` daily servicing
+  with default, `cfg.loans_enabled` (default off) + `loan_max_interest` /
+  `loan_max_term_days` clamps.
+- **Contract v1.3 → v1.4 (additive):** `AcceptDeal` intent; `DealResolved` +
+  `LoanUpdated` events; `MerchantView` / `ReputationSummary` reads; `LoanView` +
+  `Snapshot.loans`; `SimCore.merchant_view()` / `reputation()`. The sim's
+  `world._do_accept_deal` is the **hard gate** (clamps terms, re‑checks
+  preconditions and merchant capital, records the loan, funds + performs the
+  intervention, or rejects with a reason).
+- **Tests:** `test_merchant.py` (scripted rules, round cap, fail‑closed, the LLM
+  adapter via a **stub client** — no network, and default `LLMMerchant` fails
+  closed with no SDK), `test_loans.py` (gated‑off, strike, clamp, repayment,
+  default, determinism). Both in `check.py` (now 14 gates). `demo_merchant.py`
+  shows the loop end to end.
+
+**Assumed decisions** (made per the owner's "assume crucial steps" instruction; all
+reversible in config/data):
+
+| Open question | Decision taken |
+|---|---|
+| Model & cost | **`claude-haiku-4-5`** for the merchant (cheapest acceptable; strict tool‑call output, cached persona, `max_tokens=400`). `LLMMerchant(model=…)` overrides to Sonnet 5 for complex deals. |
+| Contract shape | **Dedicated `AcceptDeal` intent** (leaves `Perform` for self‑funded actions). |
+| Rounds | **3** merchant evaluations max. |
+| Counter depth | One counter per round within the cap; a `counter_policy` (e.g. `accept_up_to(ceiling)`) drives the player side; accepting a counter needs no extra LLM call. |
+| Failure UX | **Fail‑closed:** any refusal / error / missing SDK / exhaustion → a "closed for the day" decline (`CLOSED_LINE`). No model fallback. |
+| Reputation | Contribution‑as‑standing for the MVP (step 4 upgrades it to propagated deeds). |
+
+The rest of this document is the design rationale the MVP follows.
 
 ---
 
@@ -317,5 +352,7 @@ introduces the model, at the edge, off by default.
 
 ---
 
-*This document is a scope, not an implementation. On approval, step 1 above is the
-first PR — deterministic and golden‑safe — and the LLM does not enter until step 2.*
+*Steps 1–3 are implemented (see "Built (MVP)" at the top); step 4
+(reputation‑via‑propagation) is the remaining frontier. The LLM enters only at the
+edge in step 2's `LLMMerchant`, off by default and absent from every deterministic
+test.*

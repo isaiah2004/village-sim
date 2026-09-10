@@ -168,3 +168,44 @@ Brought the docs current with the integrated + backlog state:
   * llm-merchant doc: "140 golden metrics" -> "baseline golden metrics".
 
 Docs-only; no code, golden.json UNCHANGED. check.py green, 21 gates.
+
+## DEFINITION OF SATISFACTORY — met
+
+- **main integrates A/B/C, check.py green.** 21 gates, FOUNDATION HOLDS on `main`
+  (6290861). Contract v1.5 (additive-only); no history rewrite; every merge was
+  fast-forward + green before push.
+- **Every registered scenario** (7: frostpine, tidewater, guildhall, plaguewatch,
+  emberforge, dustveil, fallowmere) runs headless, fires a real crisis (nonzero
+  unmet + contribution + crisis-phase price spike), save/loads byte-identically, and
+  drives through the contract — the `cross-scenario` gate asserts all of it for every
+  world. Golden 16 scenarios / 225 metrics, baselines byte-identical, new worlds additive.
+- **The playable View can pick and play any scenario** — `view_play.py` (+ `--demo`
+  over all worlds; view_text.py/game.py `--scenario` delegate to it). `playable view` gate.
+- **A representative intervention library works with reputation-gating** — the ladder
+  (haul_relief / found_mill / hire_crew / endow_granary / open_trade_route), each
+  capital+standing gated and index-scored, on capital and capital-less worlds.
+  `intervention library` gate; reputation = propagated deeds (`reputation` gate).
+- **The contract JSON boundary is documented with a working example** —
+  docs/contract-schema.md + contract_json.py + simservice.py + demo_service.py;
+  `json service` gate proves determinism across the boundary for every world.
+- **The modularity acceptance test still passes** (`modularity` gate, saltmarsh) and
+  **docs are current** (item 6).
+
+### Bugs found & fixed along the way
+1. persistence couldn't load guildhall/plaguewatch (hardcoded agent-class list missing
+   InstitutionBuyer) — fixed by deriving from ARCHETYPES (item 2).
+2. the JSON service saved mid-turn, so a resumed state re-saved differently — fixed by
+   holding the core at a day boundary between requests (item 5).
+
+### Flagged for the human (deliberate, reversible)
+- The **pygame `game.py` UI and the frostpine `GameSession`** were NOT rewritten to be
+  generic. GameSession is the authored frostpine game (win=survive winter, warn-winter,
+  starvation, counterfactual); generalizing it is authored-content work that risks the
+  game golden, and the pixel layout can't be visually verified here. The
+  scenario-agnostic playable View is a separate body (`view_play.py`); frostpine's game
+  stays byte-identical. Making the pygame body render every world generically is a
+  dedicated UI task for a session that can see the screen.
+
+PRs opened (each its own, all merged to main): #5 playable view, #6 cross-scenario,
+#7 intervention library, #8 modularity breadth, #9 JSON seam, #10 docs. (Phase-1
+integration of #2/#3/#4 landed directly on main.)

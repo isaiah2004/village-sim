@@ -127,6 +127,15 @@ soft gate at the edge, the sim as the hard gate, all flag-gated.
    negotiation + reputation-gating (the mill). Interventions need a world-state to
    act on, so this follows Layer 1.
 
+> **Status (implemented):** all three steps are built. Layer 2 is universal (the
+> data-defined need registry); the scenario system below is data (`scenario.py`);
+> all four MVP scenarios run headlessly and through the contract; the Layer-3
+> `found_mill` slice is scenario-agnostic (founds the scenario's own capital good).
+> The baseline is byte-identical (`regression.py`: 13 scenarios / 183 metrics, the
+> new worlds captured additively). Adding a world is proven to be one data entry by
+> `test_modularity.py`. See **[SCENARIOS.md](SCENARIOS.md)**. Deepening each layer
+> (reputation-via-propagation, the edge LLM merchant) and the frostpine game remain.
+
 ## Modularity contract — scenarios are DATA, not code
 
 The end state: adding a whole new world archetype is **"type a name and assign

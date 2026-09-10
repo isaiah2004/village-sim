@@ -232,42 +232,43 @@ def _tidewater() -> Scenario:
 
 
 # ================================================================= guildhall
-# A weaving town whose economy is stabilized by a GUILD. Proves the MARKET MODEL
-# is a data axis: MarketSpec.model == "guild" means the guild hall posts a
-# standing support bid (buy up to `quota` of cloth at a capped `price`), putting
-# a floor under weavers when a glut would otherwise collapse the price; supply
-# beyond the quota overflows to the ordinary call auction. Cloth is the crisis
-# good (over-made in the glut season); grain is the comfortable staple.
+# An adventurer town whose economy is stabilized by a GUILD (DESIGN.md's third
+# MVP world). Proves the MARKET MODEL is a data axis: MarketSpec.model == "guild"
+# means the guild hall posts a standing support bid -- it buys up to `quota`
+# potions at a capped `price` from the adventurers, putting a floor under their
+# takings when a big "delve" haul would otherwise flood the market and collapse
+# the price; supply beyond the quota overflows to the ordinary call auction.
+# Potions are the crisis good the townsfolk need; rations are the staple.
 def _guildhall() -> Scenario:
-    cloth_yield = {"boom": 1.0, "fair": 1.2, "glut": 2.0, "lean": 0.8}
-    grain_yield = {"boom": 1.1, "fair": 1.1, "glut": 1.0, "lean": 0.9}
+    potion_yield = {"muster": 1.0, "delve": 2.0, "peril": 0.8, "rest": 1.1}
+    ration_yield = {"muster": 1.1, "delve": 1.0, "peril": 0.9, "rest": 1.1}
     phases = tuple(
         Phase(name=name, length=30,
-              yield_mult={"cloth": cloth_yield[name], "grain": grain_yield[name]},
-              consume_mult={"cloth": 1.0, "grain": 1.0})
-        for name in ("boom", "fair", "glut", "lean")
+              yield_mult={"potion": potion_yield[name], "ration": ration_yield[name]},
+              consume_mult={"potion": 1.0, "ration": 1.0})
+        for name in ("muster", "delve", "peril", "rest")
     )
-    driver = Driver(name="trade_seasons", phases=phases)
-    # Cloth is structurally OVER-made (far more woven than the town consumes), so
-    # in a glut its open-market price would collapse toward the hard floor -- the
-    # weavers' wage evaporates. Grain is a comfortable, balanced staple.
+    driver = Driver(name="expeditions", phases=phases)
+    # Potions come back from expeditions far faster than the town drinks them, so
+    # after a big delve their open-market price would collapse toward the hard
+    # floor -- the adventurers' pay evaporates. Rations are a balanced staple.
     resources = (
-        ResourceSpec("cloth", intrinsic_value=5.0, consumable=True, base_yield=3.2, base_consume=0.6),
-        ResourceSpec("grain", intrinsic_value=6.0, consumable=True, base_yield=2.5, base_consume=1.0),
+        ResourceSpec("potion", intrinsic_value=5.0, consumable=True, base_yield=3.2, base_consume=0.6),
+        ResourceSpec("ration", intrinsic_value=6.0, consumable=True, base_yield=2.5, base_consume=1.0),
     )
-    needs = (NeedSpec("cloth_need", "cloth", rewarded=True),
-             NeedSpec("grain_need", "grain", rewarded=False))
-    population = (PopSpec("villager", 8, "w"),                       # weavers
-                 PopSpec("dependent", 3, "g", kwargs={"produces": "grain"}),
+    needs = (NeedSpec("potion_need", "potion", rewarded=True),
+             NeedSpec("ration_need", "ration", rewarded=False))
+    population = (PopSpec("villager", 8, "a"),                       # adventurers
+                 PopSpec("dependent", 3, "t", kwargs={"produces": "ration"}),  # townsfolk
                  PopSpec("market_maker", 1, "mk",                    # the guild hall
                          kwargs={"daily_volume": 16.0, "target_inventory": 40.0}))
-    # the guild floor: buy up to 60 cloth/day at 4.5 (below intrinsic 5.0) so a
-    # glut can't drive the price through the floor -- weavers keep a fair wage.
-    market = MarketSpec("guild", params={"resource": "cloth", "price": 4.5, "quota": 60.0})
+    # the guild floor: buy up to 60 potions/day at 4.5 (below intrinsic 5.0) so a
+    # delve glut can't drive the price through the floor -- adventurers keep their pay.
+    market = MarketSpec("guild", params={"resource": "potion", "price": 4.5, "quota": 60.0})
     return Scenario(
         name="guildhall", resources=resources, driver=driver, needs=needs,
         market=market, population=population,
-        primary_resource="cloth", crisis_phase="glut",
+        primary_resource="potion", crisis_phase="delve",
     )
 
 

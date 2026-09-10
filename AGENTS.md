@@ -125,10 +125,33 @@ SimCore + contract  →  GameSession (session.py)  →  View (game.py, view_text
 > **North star: [DESIGN.md](DESIGN.md).** Read it before choosing work. The index
 > is a **calculator, not the game**; never hardcode a scenario into it. The build
 > order is settled there: **(1) make Layer 2 (the index) universal — DONE below;
-> (2) Layer 1 world-model — first piece DONE below; (3) Layer 3 interventions —
-> first piece DONE below.** All three layers now have a working first piece; the
-> frontier is deepening each (esp. reputation-via-propagation and the LLM merchant
-> at the edge). Confirm scope with the owner before the next big step.
+> (2) Layer 1 world-model + the scenario system — DONE below; (3) Layer 3
+> interventions — first piece DONE below, now scenario-agnostic.** All three
+> layers work, the **world model is fully data-driven (scenarios are data)**, and
+> everything is drivable through the contract by any View/UE5. The frontier is
+> deepening each layer (esp. reputation-via-propagation and the LLM merchant at
+> the edge) and the frostpine game. Confirm scope with the owner before the next
+> big step.
+
+**The world model is now DATA — the scenario system.** A world's axes (resources,
+the cyclical driver, needs, the market model, population, capital goods) are a
+named `Scenario` value in `scenario.py`; the sim, the index, and the contract read
+them generically with **no per-scenario branching**. `make_config(name)` /
+`make_world(name)` build a fully-configured world from a name. Four MVP worlds
+ship — **frostpine** (the byte-identical baseline), **tidewater** (a driver +
+resources are data), **guildhall** (an adventurer town; the market model is a data
+axis: a guild support bid floors adventurers' pay ≈ 5.5×), **emberforge** (multi-resource
+structural scarcity relieved by a generic capital good). The capital-goods system,
+the player's skill, agent inventories, metrics, problems, and the `found_mill`
+intervention were all generalized off scenario data while keeping frostpine
+**byte-identical** (`regression.py` now 13 scenarios / 183 metrics, the new worlds
+captured **additively** — frostpine's 140 untouched). The contract went **v1.4 →
+v1.5** (additive): `AgentView.holdings`/`.fears` and `Snapshot.scenario`/
+`.primary_resource`/`.consumables`/`.village_unmet` are generic resource-keyed
+reads, so a body renders any world without knowing wood/food. `demo_scenarios.py`
+is a thin scenario-agnostic body proving it; `test_modularity.py` adds a throwaway
+world ("saltmarsh") and proves a new world is **one data entry, zero new logic**.
+See **[SCENARIOS.md](SCENARIOS.md)** for the axes and the add-a-world guide.
 
 **Layer 2 is now universal — the need registry.** "Need" is DATA (`needs.py`): a
 `Need` = an identity, the resource whose consumption meets it (the lineage

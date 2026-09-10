@@ -120,6 +120,48 @@ def test_save_load_over_wire() -> list:
     return fails
 
 
+def test_layer3_over_wire() -> list:
+    """The whole Layer-3 loop drives over JSON: read the intervention menu and
+    reputation, then Perform an intervention as a submitted intent, and an
+    InterventionPerformed event comes back over the wire."""
+    fails = []
+    svc = SimService("frostpine", flags={
+        "interventions_enabled": True, "capital_goods_enabled": True,
+        "reward_at_fair_value": True})
+    # menu + reputation reads are well-formed JSON
+    menu = svc.handle({"op": "interventions"}).get("interventions")
+    if not menu or not all("can_perform" in e and "reason" in e for e in menu):
+        fails.append("layer3-wire: intervention menu malformed")
+    if not _json_ok(menu):
+        fails.append("layer3-wire: intervention menu not json-serializable")
+    rep = svc.handle({"op": "reputation"}).get("reputation")
+    if not rep or "standing" not in rep or "descriptor" not in rep:
+        fails.append("layer3-wire: reputation read malformed")
+    # qualify the player (test-side setup), then Perform over the wire
+    svc.core.world.by_id["PLAYER"].bonus_earned = 300.0
+    svc.core.world.by_id["PLAYER"].money = 500.0
+    # advance to a day with a live scarcity/capital problem so the deed can land
+    for _ in range(120):
+        r = json.loads(json.dumps(svc.handle({"op": "interventions"})))
+        if any(e["can_perform"] for e in r["interventions"]):
+            break
+        svc.handle({"op": "step"})
+    ready = [e["key"] for e in svc.handle({"op": "interventions"})["interventions"]
+             if e["can_perform"]]
+    if not ready:
+        fails.append("layer3-wire: no intervention ever became performable")
+        return fails
+    svc.handle(json.loads(json.dumps(
+        {"op": "submit", "intents": [{"type": "perform", "key": ready[0]}]})))
+    resp = json.loads(json.dumps(svc.handle({"op": "step"})))
+    perf = [e for e in resp["events"] if e["type"] == "InterventionPerformed"]
+    if not perf:
+        fails.append("layer3-wire: no InterventionPerformed event came back over the wire")
+    elif not perf[0]["accepted"]:
+        fails.append(f"layer3-wire: performed intervention rejected: {perf[0]['reason']}")
+    return fails
+
+
 def test_robust() -> list:
     fails = []
     svc = SimService("frostpine")
@@ -134,7 +176,8 @@ def main() -> int:
     all_fails = []
     tests = (("SCHEMA", test_schema), ("JSON-SAFE", test_json_safe),
              ("DETERMINISM", test_determinism_across_boundary),
-             ("SAVE/LOAD-WIRE", test_save_load_over_wire), ("ROBUST", test_robust))
+             ("SAVE/LOAD-WIRE", test_save_load_over_wire),
+             ("LAYER3-WIRE", test_layer3_over_wire), ("ROBUST", test_robust))
     for name, fn in tests:
         fails = fn()
         print(f"[{'ok' if not fails else 'FAIL'}] {name}")

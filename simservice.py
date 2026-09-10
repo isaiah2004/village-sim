@@ -14,6 +14,8 @@ Request envelope: {"op": "<name>", ...}
   * {"op": "step"}                            -> {"snapshot": {...}, "events": [ {..} ], "done": bool}
   * {"op": "save"}                            -> {"save": {...}}          (full JSON save blob)
   * {"op": "load", "save": {...}}             -> {"snapshot": {...}}      (resume from a blob)
+  * {"op": "interventions"[, "agent_id"]}     -> {"interventions": [ {key,title,can_perform,reason,..} ]}
+  * {"op": "reputation"[, "agent_id"]}        -> {"reputation": {"standing": .., "descriptor": ..}}
   * {"op": "schema"}                          -> {"schema": {...}}        (the wire shapes)
 
 `handle(request)` never raises on a bad request -- it returns {"error": "..."} so a
@@ -29,10 +31,12 @@ from simcore import SimCore
 
 class SimService:
     def __init__(self, scenario_name: str = "frostpine", propagation: bool = False,
-                 interventions: bool = False):
+                 interventions: bool = False, flags: dict | None = None):
         cfg = scen.make_config(scenario_name)
         if interventions:
             cfg.interventions_enabled = True
+        for k, v in (flags or {}).items():      # arbitrary cfg overrides (loans, capital, reputation...)
+            setattr(cfg, k, v)
         self.core = SimCore(config=cfg, propagation=propagation,
                             population=scen.build_population(scen.get_scenario(scenario_name)))
         # The core is kept at a DAY BOUNDARY between requests (never mid-turn), so
@@ -66,6 +70,18 @@ class SimService:
             if op == "load":
                 self.core = SimCore.from_save(request["save"])
                 return {"snapshot": CJ.snapshot_to_json(self.core.snapshot())}
+            if op == "interventions":
+                # the Layer-3 action menu a client renders: each entry says whether
+                # it can be performed now and, if not, why (the gate reason).
+                agent_id = request.get("agent_id", "PLAYER")
+                return {"interventions": [
+                    {"key": k, "title": t, "targets": tgt, "capital_cost": cost,
+                     "min_standing": ms, "can_perform": ok, "reason": reason}
+                    for (k, t, tgt, cost, ms, ok, reason) in self.core.interventions(agent_id)]}
+            if op == "reputation":
+                agent_id = request.get("agent_id", "PLAYER")
+                rep = self.core.reputation(agent_id)
+                return {"reputation": {"standing": rep.standing, "descriptor": rep.descriptor}}
             if op == "schema":
                 return {"schema": CJ.schema()}
             return {"error": f"unknown op {op!r}"}

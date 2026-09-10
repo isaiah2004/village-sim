@@ -28,6 +28,8 @@ and responses are plain JSON objects; a malformed request returns
 | `{"op": "step"}` | `{"snapshot": {...}, "events": [ {event}, ... ], "done": bool}` |
 | `{"op": "save"}` | `{"save": {...}}` — a full JSON save blob (from `persistence.py`) |
 | `{"op": "load", "save": {...}}` | `{"snapshot": {...}}` — resume from a blob |
+| `{"op": "interventions"[, "agent_id"]}` | `{"interventions": [ {key, title, targets, capital_cost, min_standing, can_perform, reason}, ... ]}` — the Layer-3 action menu |
+| `{"op": "reputation"[, "agent_id"]}` | `{"reputation": {"standing": float, "descriptor": str}}` — the gate input |
 
 The service keeps the sim at a **day boundary** between requests, so a `save` is
 always clean and a `load` resumes byte-identically. `submit` queues the player's

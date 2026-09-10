@@ -243,3 +243,20 @@ Runs on the same reputation rng/graph (own stream), flag-gated (reputation off b
 default), and persisted for free (default facts are ordinary reputation beliefs).
 New sub-test DEFAULT-HIT in test_reputation.py. golden.json UNCHANGED. check.py
 green, 21 gates.
+
+### Item 9 — Layer-3 read surface over the JSON boundary ✓ (branch: claude/service-layer3)
+
+Rounded out the sim-as-a-service seam so a UE5/web client can drive the WHOLE game
+over JSON, not just gather/trade:
+  * SimService gained a `flags` dict (arbitrary cfg overrides: loans/capital/
+    reputation/…) and two read ops -- {"op":"interventions"} (the Layer-3 action
+    menu with can_perform + gate reason) and {"op":"reputation"} (standing +
+    descriptor). Perform/AcceptDeal already crossed as intents; now the client can
+    also READ the menu and reputation it needs to decide.
+  * docs/contract-schema.md + the service docstring list the new ops.
+  * New sub-test LAYER3-WIRE in test_service.py: read the menu + reputation over the
+    wire, then Perform an intervention as a submitted JSON intent and confirm an
+    InterventionPerformed(accepted) event comes back over the wire.
+
+golden.json UNCHANGED (service reads only; no sim/contract change). check.py green,
+21 gates.

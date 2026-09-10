@@ -457,6 +457,10 @@ if __name__ == "__main__":
         i = sys.argv.index("--scenario")
         _name = sys.argv[i + 1] if i + 1 < len(sys.argv) else "frostpine"
         if _name != "frostpine":
+            import scenario as _scen
+            if _name not in _scen.scenario_names():
+                print(f"unknown scenario {_name!r}; known: {_scen.scenario_names()}")
+                raise SystemExit(1)
             import view_play
             raise SystemExit(view_play.play(_name))
     Game().run()

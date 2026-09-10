@@ -51,6 +51,9 @@ class Intervention:
     requires: tuple = ()
 
 
+TRADE_ROUTE_MAX_LEVEL = 5      # an open_trade_route caps here, like a capital good
+
+
 # ------------------------------------------------------------------ effects
 # Authored, deterministic world-changes keyed by intervention. Load-bearing sim
 # code: this is the ONLY place an intervention touches world-state. Each effect is
@@ -98,7 +101,8 @@ def _effect_open_trade_route(world, agent, day: int) -> None:
     r = _primary(world)
     tr = next((a for a in agent.assets if a.kind == "trade_route"), None)
     if tr is not None:
-        tr.level += 1
+        if tr.level < TRADE_ROUTE_MAX_LEVEL:      # capped like a capital good, no unbounded stacking
+            tr.level += 1
         return
     lot = world.lineage.new_lot("trade_route", agent.id, day, "build", 1.0, parents=[])
     agent.assets.append(Asset(kind="trade_route", lot_id=lot.id, built_tick=day, level=1,
@@ -179,10 +183,14 @@ def standing(agent, world=None) -> float:
     rep = getattr(world, "reputation", None) if world is not None else None
     if rep is None or agent is None:
         return base
-    reach = rep.reach(agent.id, world._active_ids)
+    # reach/disrepute are measured over the RESIDENTS (the town), not the player,
+    # the market maker, or an off-town institution -- so a benefactor can actually
+    # reach the whole village, and non-townsfolk don't dilute the denominator.
+    residents = world.resident_ids()
+    reach = rep.reach(agent.id, residents)
     # a propagated default discounts standing: the more of the village that has
     # heard you defaulted, the less your track record is trusted (penalty tunable).
-    disrepute = rep.disrepute(agent.id, world._active_ids)
+    disrepute = rep.disrepute(agent.id, residents)
     penalty = getattr(world.cfg, "reputation_default_penalty", 1.0)
     return round(base * reach * max(0.0, 1.0 - penalty * disrepute), 6)
 

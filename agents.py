@@ -34,16 +34,38 @@ def _scenario_ids(cfg):
     return (list(sc.resource_ids()), list(sc.consumable_ids()))
 
 
+def is_resident(agent) -> bool:
+    """A townsperson whose welfare and awareness 'the village' is measured over:
+    villagers and dependents -- not the player (the actor), the market maker (the
+    trading post), or an off-town institution. One predicate for every
+    resident-only computation (welfare metrics, reputation reach)."""
+    return not (getattr(agent, "is_player", False)
+                or getattr(agent, "is_market_maker", False)
+                or getattr(agent, "is_institution", False))
+
+
+def _is_institution_archetype(archetype: str) -> bool:
+    """Is this archetype an off-town INSTITUTION (a war quartermaster, a plague
+    apothecary) rather than a resident? Institutions carry only their own scoped
+    need, never the town's universal needs."""
+    cls = ARCHETYPES.get(archetype) if "ARCHETYPES" in globals() else None
+    return bool(getattr(cls, "is_institution", False))
+
+
 def _need_ids(cfg, archetype: str) -> list:
     """The resources THIS archetype consumes daily (its needs). A NeedSpec with
-    consumer="" is universal (every agent); one scoped to an archetype attaches
-    only to that archetype. No scenario attached -> the frostpine defaults, where
-    both needs are universal, so every agent needs wood + food (byte-identical)."""
+    consumer="" is a universal TOWN need (every resident archetype -- villagers,
+    dependents, the market maker, the player); one scoped to an archetype attaches
+    only to that archetype. An off-town INSTITUTION (e.g. the war buyer) gets ONLY
+    its scoped need, never the town's staples -- it does not live here. No scenario
+    attached -> the frostpine defaults, where both needs are universal, so every
+    agent needs wood + food (byte-identical)."""
     sc = getattr(cfg, "scenario", None)
     if sc is None:
         return [Resource.WOOD, Resource.FOOD]
+    institution = _is_institution_archetype(archetype)
     return [ns.resource for ns in sc.needs
-            if ns.consumer == "" or ns.consumer == archetype]
+            if ns.consumer == archetype or (ns.consumer == "" and not institution)]
 
 
 # ----- decisions the agent hands back to the World to execute -----

@@ -180,11 +180,10 @@ def demo_one(name: str) -> dict:
         prim = snap.primary_resource
         # a simple, universal policy: work the crisis good; invest in capital when
         # the scenario has it and we can; sell a little of what we pile up.
-        if C.Gather is not None:
-            core.submit(C.Gather(prim))
-            for g in snap.consumables:
-                if g != prim:
-                    core.submit(C.Gather(g))
+        core.submit(C.Gather(prim))
+        for g in snap.consumables:
+            if g != prim:
+                core.submit(C.Gather(g))
         core.submit(C.BuildWoodlot())            # no-op unless the world has capital + means
         if me.holdings.get(prim, 0.0) > 6.0:
             core.submit(C.Trade(prim, "sell", 4.0, _price_for(core, prim, "sell")))

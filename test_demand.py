@@ -89,6 +89,12 @@ def test_scoped() -> list:
         fails.append("no institutional buyer spawned")
     elif prim not in buyer[0].need_ids:
         fails.append("the buyer does not carry the demand-good need")
+    else:
+        # the off-town buyer must NOT inherit the town's universal staple need --
+        # it does not live here, so it can't be a phantom staple-consumer.
+        staple = next(r for r in w.consumable_ids if r != prim)
+        if staple in buyer[0].need_ids:
+            fails.append(f"the off-town buyer wrongly inherited the staple need {staple}")
     return fails
 
 

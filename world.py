@@ -26,7 +26,7 @@ import random
 from accountant import Accountant
 from agents import (AcceptDealAction, Asset, BuildWoodlotAction, Ctx, CraftToolAction,
                     GatherAction, InterventionAction, Loan, MarketMaker, Order, Player,
-                    SpawnSpec, Villager)
+                    SpawnSpec, Villager, is_resident)
 from config import Config, Resource, Season
 from knowledge import Claim, PropagationEngine, SocialGraph
 from lineage import LineageGraph
@@ -146,6 +146,12 @@ class World:
         self._player_bonus_at_day_start: float = 0.0
 
         self._seed_initial_reserves()
+
+    def resident_ids(self) -> set:
+        """The townspeople 'the village' is measured over (villagers + dependents):
+        not the player, the market maker, or an off-town institution. Used as the
+        denominator for reputation reach -- how far word has reached the town."""
+        return {a.id for a in self.agents if is_resident(a)}
 
     def _seed_initial_reserves(self) -> None:
         """Give everyone a few days of starting reserves.
@@ -650,7 +656,7 @@ class World:
                 _, shortfall = result[r]
                 own_unmet[r] = shortfall
                 self.day_unmet[r] += shortfall
-                if not ag.is_player and not ag.is_market_maker and not ag.is_institution:
+                if is_resident(ag):
                     self.village_unmet[r] += shortfall
                 if shortfall > 1e-6:
                     short_today = True
@@ -683,8 +689,7 @@ class World:
             hubs = [a.id for a in self.agents if a.is_market_maker]
             return hubs[0] if hubs else self.agents[0].id
         if target == "random":
-            villagers = [a.id for a in self.agents
-                         if not a.is_player and not a.is_market_maker]
+            villagers = [a.id for a in self.agents if is_resident(a)]
             return self.prop_rng.choice(villagers)
         return target
 
@@ -746,7 +751,7 @@ class World:
             rumour = {r: self.prop.scarcity(ag.id, r) for r in self.consumable_ids}
             ag.update_belief(self._per_agent_unmet.get(ag.id, {}), _ZERO_UNMET, rumour=rumour, consumables=self.consumable_ids)
 
-        villagers = [a for a in self.agents if not a.is_player and not a.is_market_maker]
+        villagers = [a for a in self.agents if is_resident(a)]
         vids = {a.id for a in villagers}
         for r in self.consumable_ids:
             self.rumour_avg[r] = self.prop.avg_scarcity(r, vids)

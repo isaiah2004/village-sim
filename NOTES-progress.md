@@ -260,3 +260,28 @@ over JSON, not just gather/trade:
 
 golden.json UNCHANGED (service reads only; no sim/contract change). check.py green,
 21 gates.
+
+### Item 10 — correctness pass (findings from a /code-review of the whole session) ✓ (branch: claude/review-fixes)
+
+Ran an adversarial high-effort code-review of everything added this session and
+fixed the real findings (all clustered around the off-town InstitutionBuyer being
+swept into resident-only computations):
+  * ROOT CAUSE -- introduced one predicate `agents.is_resident(agent)` (not player,
+    not market maker, not institution) and routed the scattered village filters
+    through it (metrics villagers, world.village_unmet, gossip target, rumour_avg).
+  * #1 institution inherited universal staple need -> a phantom perpetual staple
+    shortfall + inflated day_short/day_unmet + a distorted staple consumer-count in
+    the accountant. Fixed: institutions get ONLY their scoped need, never the town's
+    universal needs. (Byte-identical to golden -- the distortion was in the staple
+    price / day_unmet, which the summary never captured; regression unchanged.)
+  * #2 reputation reach/disrepute denominator counted non-residents (buyer, market
+    maker), so a benefactor could never reach 1.0 in a demand world. Fixed: reach is
+    measured over `world.resident_ids()`.
+  * #3 open_trade_route upgraded level unbounded (a supply cheat). Fixed: capped at
+    TRADE_ROUTE_MAX_LEVEL (5), like a capital good.
+  * #5 `game.py --scenario bogus` dumped a traceback. Fixed: validate the name, clean
+    error + exit 1.
+  * #6 dead `if C.Gather is not None` guard in view_play removed.
+
+New assertion in test_demand.py (the off-town buyer must not inherit the staple
+need). golden.json UNCHANGED. check.py green, 21 gates.

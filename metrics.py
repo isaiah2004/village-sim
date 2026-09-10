@@ -60,9 +60,8 @@ class Metrics:
         s["player_bonus"].append(world.player.bonus_earned)
         s["hoard_flags"].append(len(world.accountant.state.hoard_flags))
         s[f"player_{self.primary}"].append(world.player.qty(self.primary))
-        villagers = [a for a in world.agents
-                     if not a.is_player and not a.is_market_maker
-                     and not getattr(a, "is_institution", False)]
+        from agents import is_resident
+        villagers = [a for a in world.agents if is_resident(a)]
         vids = {a.id for a in villagers}
         n = max(len(villagers), 1)
         for r in self.consumables:

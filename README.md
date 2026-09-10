@@ -94,6 +94,8 @@ numbers byte-for-byte.
 | `view_text.py` | Terminal **View** of the frostpine authored game (`--scenario <name>` hands any other world to `view_play.py`). |
 | `view_play.py` | **Scenario-agnostic playable View** — pick and play ANY registered world through the contract (`python view_play.py <name>`; `--demo` plays them all). |
 | `persistence.py` | Full-fidelity JSON save/load for `SimCore`. |
+| `contract_json.py` | JSON wire codec for the contract (Intents/Events/Snapshot) + a machine-readable `schema()`. |
+| `simservice.py` | `SimService` — drive the sim across a JSON boundary (the UE5/sim-as-a-service seam); `demo_service.py` is a working client. See [docs/contract-schema.md](docs/contract-schema.md). |
 | `check.py` | The foundation gate: regression + conformance + persistence + unit tests. |
 | `regression.py` + `golden.json` | Golden-master safety net (14 scenarios, 197 metrics — frostpine's rows byte-identical). |
 | `test_*.py` | Behavioural + contract + persistence + `test_modularity.py` (the data-driven-world proof). |

@@ -123,3 +123,29 @@ Golden captured ADDITIVELY: 0 pre-existing rows changed, +SCENARIO_DUSTVEIL,
 (test_modularity.py) and the cross-scenario guard (test_scenarios.py, now 7 worlds)
 both cover the claim — a new world is one data entry, zero new logic. check.py green,
 20 gates.
+
+### Item 5 — UE5 / sim-as-a-service seam ✓ (branch: claude/contract-json-seam)
+
+Documented and shipped the contract's JSON wire format so an out-of-process body
+(a UE5 client, a web front-end) can drive the SAME sim across a boundary:
+
+  * contract_json.py -- lossless codec: intent_from_json / intent_to_json,
+    event_to_json, snapshot_to_json, and a machine-readable schema() derived from
+    the dataclasses (can't drift from the contract).
+  * simservice.py -- SimService.handle(request)->response, a JSON-RPC-like endpoint
+    (ops: schema/snapshot/submit/step/save/load) that keeps the core at a DAY
+    BOUNDARY between requests so save/load is always clean. Transport-agnostic;
+    bad requests return {"error":...}, never raise.
+  * demo_service.py -- a working client that drives a full year with json.dumps/
+    json.loads around every crossing, then saves mid-year and resumes in a fresh
+    service. Nothing but JSON crosses.
+  * docs/contract-schema.md -- the wire schema (intents/events/snapshot/views), the
+    request envelope, determinism guarantee, and the worked example.
+
+New gate test_service.py: schema / json-safe (every world's snapshot+events
+serialize with stdlib json) / DETERMINISM ACROSS THE BOUNDARY (a JSON-string-driven
+run == an in-process run, byte-identical welfare, for every world) / save-load over
+the wire / robust to bad requests. Found & fixed a real bug: the service first saved
+mid-turn (not at a boundary) so load re-saved differently -- fixed by keeping the
+core at a boundary between requests. golden.json UNCHANGED (new seam only). check.py
+green, 21 gates.

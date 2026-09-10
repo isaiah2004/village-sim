@@ -45,6 +45,7 @@ STEPS = [
     ("reputation",           [sys.executable, "test_reputation.py"]),
     ("playable view",        [sys.executable, "test_view_play.py"]),
     ("cross-scenario",       [sys.executable, "test_scenarios.py"]),
+    ("json service",         [sys.executable, "test_service.py"]),
 ]
 
 

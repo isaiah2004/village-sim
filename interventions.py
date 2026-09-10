@@ -102,11 +102,19 @@ def build_library(cfg: Config) -> list[Intervention]:
 
 
 # ------------------------------------------------------------ standing / gate
-def standing(agent) -> float:
-    """Reputation proxy: realized contribution to date -- your track record of
-    deeds. DESIGN.md's full model is deeds propagated through knowledge.py; this is
-    the deterministic first cut that plugs into the same precondition slot."""
-    return round(getattr(agent, "bonus_earned", 0.0), 6)
+def standing(agent, world=None) -> float:
+    """Reputation that gates interventions and merchant deals: your track record of
+    deeds, AS KNOWN. Base is realized contribution to date. When reputation
+    propagation is on (DESIGN.md's full model, reputation.py), it is scaled by how
+    far word of your deeds has actually reached the village -- a benefactor nobody
+    has heard of is still unproven. With propagation off there is no network and
+    reach is 1, so this is exactly the raw-contribution first cut (golden-safe)."""
+    base = round(getattr(agent, "bonus_earned", 0.0), 6)
+    rep = getattr(world, "reputation", None) if world is not None else None
+    if rep is None or agent is None:
+        return base
+    reach = rep.reach(agent.id, world._active_ids)
+    return round(base * reach, 6)
 
 
 def _target_severity(world, problem_key: str) -> float:
@@ -127,7 +135,7 @@ def evaluate(world, agent, iv: Intervention, extra_capital: float = 0.0) -> tupl
             return False, f"requires {flag}"
     if _target_severity(world, iv.targets) <= 1e-6:
         return False, "no such problem to solve"          # only a real problem pays
-    have = standing(agent)
+    have = standing(agent, world)
     if have < iv.min_standing:
         return False, f"needs standing {iv.min_standing:.0f} (have {have:.0f})"
     if agent.money + extra_capital < iv.capital_cost:

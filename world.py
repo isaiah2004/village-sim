@@ -32,6 +32,7 @@ from knowledge import Claim, PropagationEngine, SocialGraph
 from lineage import LineageGraph
 from market import CallMarket
 from metrics import Metrics
+from reputation import ReputationNetwork as _Reputation
 import interventions
 import problems
 
@@ -119,6 +120,19 @@ class World:
             graph = SocialGraph(cfg, [a.id for a in self.agents], hubs, self.prop_rng)
             self.prop = PropagationEngine(cfg, graph, self.prop_rng)
         self._active_ids = {a.id for a in self.agents}
+
+        # ----- reputation propagation (Layer 3; off by default) -----
+        # Deeds spread through the SAME kind of social graph as scarcity news, but
+        # on a DEDICATED rng and graph so the economic/gossip streams stay
+        # byte-identical. Standing then = realized contribution x how far word of
+        # the agent's deeds has reached (reputation.py). Untouched when the flag is
+        # off, so every existing scenario is unchanged.
+        self.reputation = None
+        if cfg.reputation_propagation:
+            self.rep_rng = random.Random(cfg.seed ^ 0x2545F491)
+            hubs = [a.id for a in self.agents if a.is_market_maker]
+            rep_graph = SocialGraph(cfg, [a.id for a in self.agents], hubs, self.rep_rng)
+            self.reputation = _Reputation(cfg, rep_graph, self.rep_rng)
 
         # initialized empty so UI can read on day 0 before first market clearing
         self.last_orders: dict = {r: [] for r in self.resource_ids}
@@ -234,7 +248,22 @@ class World:
                                             self.day_unmet.get(_primary, 0.0))
         self.accountant.charge_holding_fees(self.agents)
         self._loan_phase()
+        self._reputation_phase()
         self.metrics.record(self, self._villager_ctx)
+
+    def _reputation_phase(self) -> None:
+        """Deeds spread (Layer 3). Each agent's realized contribution to date is
+        refreshed as a first-hand deed fact at their own node, then word travels
+        one hop through the reputation graph and stale word decays. No-op unless
+        reputation propagation is enabled -> golden byte-identical."""
+        if self.reputation is None:
+            return
+        for ag in self.agents:
+            if ag.is_market_maker or getattr(ag, "is_institution", False):
+                continue                       # the market/institutions don't build personal repute
+            self.reputation.record_deed(ag.id, getattr(ag, "bonus_earned", 0.0), self.day)
+        self.reputation.step(self.day, self._active_ids)
+        self.reputation.decay()
 
     def _ctx_for(self, ag):
         return self._player_ctx if ag.is_player else self._villager_ctx

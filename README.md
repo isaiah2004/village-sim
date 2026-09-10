@@ -86,6 +86,7 @@ numbers byte-for-byte.
 | `lineage.py` | Resource-lineage DAG + backward credit propagation. |
 | `market.py` | Per-resource call auction (sealed-bid double auction). |
 | `knowledge.py` | Social graph + belief propagation (the echo-cap keystone). |
+| `reputation.py` | Reputation = deeds propagated: standing = contribution × how far word has reached (own RNG; flag-gated; golden-safe). |
 | `metrics.py` | Per-day series + welfare summary. |
 | `config.py` | All tunables; `Resource`/`Season` enums. |
 | `session.py` | `GameSession` — engine-agnostic game rules (turn flow, action economy, win/lose, impact ledger, counterfactual, semantic news feed). **No rendering.** |

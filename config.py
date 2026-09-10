@@ -140,6 +140,16 @@ class Config:
     villager_authority: float = 0.35  # how much a random villager's word is trusted
     rumour_fear_gain: float = 0.5     # how strongly a held scarcity-belief inflates perceived_scarcity/day
 
+    # ----- reputation propagation (DESIGN.md: reputation = deeds propagated) -----
+    # When on, an agent's realized-effect deeds spread through the SAME social
+    # graph as scarcity news (with a DEDICATED rng, so the economic propagation
+    # stream is byte-identical). Standing = realized contribution x how far word of
+    # your deeds has reached, so a benefactor nobody has heard of is still unproven.
+    # OFF by default -> standing stays raw contribution and the golden is untouched.
+    reputation_propagation: bool = False
+    reputation_deed_scale: float = 60.0     # contribution that counts as a "fully notable" deed (magnitude 1.0)
+    reputation_aware_threshold: float = 0.05  # min held belief to count as "has heard of you"
+
     # ----- capital goods (Phase 1: does contribution generalise past consumables?) -----
     # A WOODLOT is an owned, persistent asset that YIELDS wood every day. It tests
     # whether the realized-effect payout credits a builder for INFRASTRUCTURE that

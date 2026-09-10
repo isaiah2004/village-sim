@@ -202,9 +202,9 @@ default (`cfg.interventions_enabled`) → the **140 golden metrics stay byte-ide
 yourself → found & grow the mill → capital gap 1.00→0.00); `test_interventions.py`
 proves library-data, gated-off no-op, precondition gating, the world-change effect +
 index pricing, and determinism. Two seams are deliberate and documented in
-`interventions.py`: **standing** (`interventions.standing`, today = realized
-contribution; DESIGN.md's reputation = deeds propagated through `knowledge.py` plugs
-in here) and **negotiation** (`interventions.evaluate`, today a deterministic
+`interventions.py`: **standing** (`interventions.standing` — the reputation gate,
+now realized contribution × propagated reach when reputation propagation is on;
+see the reputation section below) and **negotiation** (`interventions.evaluate`, today a deterministic
 merchant; an LLM merchant replaces it AT THE EDGE — proposes/judges, sim validates,
 never mutates state).
 
@@ -222,13 +222,27 @@ loop; `test_merchant.py` + `test_loans.py` cover it (LLM stubbed, never live in
 tests). Full design + the assumed decisions:
 [docs/llm-merchant-negotiation.md](docs/llm-merchant-negotiation.md).
 
+**Layer 3 — reputation via propagation (BUILT).** DESIGN.md's step 4: an agent's
+realized DEEDS spread through the same social graph as scarcity news, and it is
+that PROPAGATED standing that gates interventions and the merchant, not a private
+tally. `reputation.py` (a `ReputationNetwork` wrapping the propagation engine,
+keyed by the SUBJECT agent's id) runs on a DEDICATED rng so the economic/gossip
+streams stay byte-identical; `world._reputation_phase` refreshes each agent's
+first-hand deed fact and spreads it one hop per day. `interventions.standing`
+became `standing(agent, world)` = realized contribution × **reach** (fraction of
+the village that has heard of the deeds); `SimCore.standing`/`reputation` pass the
+world through, so the merchant judges propagated repute. Flag-gated
+`cfg.reputation_propagation` (default OFF → no network, reach ≡ 1, raw contribution
+as before → golden byte-identical). Persisted additively (`enc/dec_reputation`).
+`demo_reputation.py` shows a big benefactor at 100% reach vs unknown contributors
+at 0%; `test_reputation.py` proves golden-safety, the ramp, that propagated
+standing LOCKS a deal a raw tally would pass, and determinism.
+
 **Layer 3 — what remains (frontier, the actual game):** more interventions in the
-library (dig a well, open a trade route, haul grain to a famine); **reputation via
-propagation** (deeds → `knowledge.py` → standing — the scope doc's step 4, the one
-piece of the merchant loop still on the contribution proxy); wiring negotiation into
-the interactive bodies (`game.py`/`view_text.py`); and, when a live model is wanted,
-enabling `LLMMerchant` in a body (it is edge-only and off in the sim). **Confirm
-scope with the owner before the next big Layer-3 step.**
+library (dig a well, open a trade route, haul grain to a famine); wiring negotiation
+into the interactive bodies (`game.py`/`view_text.py`); and, when a live model is
+wanted, enabling `LLMMerchant` in a body (it is edge-only and off in the sim).
+**Confirm scope with the owner before the next big Layer-3 step.**
 
 **Track A (make the loop fun) — done this track:** contribution made *felt* (the news feed names *who*
 you kept warm and *why* it was worth what it was — `ContributionDetail` event);

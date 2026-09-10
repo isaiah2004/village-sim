@@ -324,7 +324,7 @@ class SimCore:
         realized contribution to date -- their track record of deeds."""
         import interventions
         a = self.world.by_id.get(agent_id)
-        return interventions.standing(a) if a else 0.0
+        return interventions.standing(a, self.world) if a else 0.0
 
     def reputation(self, agent_id: str = "PLAYER") -> C.ReputationSummary:
         """The agent's standing plus a plain-language band, for merchant negotiation
@@ -332,7 +332,7 @@ class SimCore:
         merchant prompt uses instead of the raw number."""
         import interventions
         a = self.world.by_id.get(agent_id)
-        s = interventions.standing(a) if a else 0.0
+        s = interventions.standing(a, self.world) if a else 0.0
         d = ("unproven" if s < 40 else "known" if s < 200
              else "trusted" if s < 600 else "renowned")
         return C.ReputationSummary(standing=round(s, 4), descriptor=d)

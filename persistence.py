@@ -242,6 +242,33 @@ def dec_prop(prop, d: dict) -> None:
         }
 
 
+def enc_reputation(rep) -> dict:
+    """Reputation network: same shape as enc_prop, but beliefs are keyed by the
+    SUBJECT agent's id (a plain string), so they are stored as-is (no Resource)."""
+    e = rep.engine
+    return {
+        "transmissions_today": e.transmissions_today,
+        "adj": {aid: sorted(ns) for aid, ns in e.graph.adj.items()},
+        "beliefs": {
+            aid: {sub: [b.value, b.confidence, sorted(b.roots), b.last_heard, b.generation]
+                  for sub, b in by.items()}
+            for aid, by in e.beliefs.items()
+        },
+    }
+
+
+def dec_reputation(rep, d: dict) -> None:
+    e = rep.engine
+    e.transmissions_today = d["transmissions_today"]
+    e.graph.adj = {aid: set(ns) for aid, ns in d["adj"].items()}
+    e.beliefs = {}
+    for aid, by in d["beliefs"].items():
+        e.beliefs[aid] = {
+            sub: Belief(val, conf, set(roots), lh, gen)
+            for sub, (val, conf, roots, lh, gen) in by.items()
+        }
+
+
 # ----------------------------------------------------------------------- rng
 def enc_rng(rng) -> list:
     version, internal, gauss = rng.getstate()
@@ -304,6 +331,9 @@ def serialize_core(core) -> dict:
     if w.prop is not None:
         blob["prop"] = enc_prop(w.prop)
         blob["world"]["prop_rng"] = enc_rng(w.prop_rng)
+    if getattr(w, "reputation", None) is not None:
+        blob["reputation"] = enc_reputation(w.reputation)
+        blob["world"]["rep_rng"] = enc_rng(w.rep_rng)
     return blob
 
 
@@ -363,6 +393,9 @@ def deserialize_core(core, data: dict) -> None:
     if w.prop is not None and "prop" in data:
         dec_rng(w.prop_rng, data["world"]["prop_rng"])
         dec_prop(w.prop, data["prop"])
+    if getattr(w, "reputation", None) is not None and "reputation" in data:
+        dec_rng(w.rep_rng, data["world"]["rep_rng"])
+        dec_reputation(w.reputation, data["reputation"])
 
     m = data["metrics"]
     w.metrics.days = list(m["days"])

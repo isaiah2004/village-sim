@@ -1,10 +1,15 @@
 # LLM merchant negotiation (Layer 3, the edge)
 
-Status: **MVP built (2026‑09‑10).** Steps 1–3 of the build order below are
-implemented, tested, and green; the LLM edge adapter is wired and fail‑closed but
-not run in any deterministic test. Step 4 (reputation‑via‑propagation) remains the
-frontier. This document is now both the design rationale *and* the record of what
-shipped. It obeys the non‑negotiables in [AGENTS.md](../AGENTS.md) §1 and
+Status: **Built (2026‑09‑10).** Steps 1–3 of the build order below are
+implemented, tested, and green, and the **LLM edge adapter is now a runnable
+negotiator** (step 2 complete): `demo_llm_merchant.py` drives a real edge
+negotiation end‑to‑end (`--live` uses `claude-haiku-4-5`; default is the
+deterministic merchant, offline), and `eval_llm_merchant.py` is the on‑demand
+judgment + prompt‑injection quality eval (opt‑in `--live`, never in `check.py`).
+The adapter was hardened against safety refusals (`stop_reason == "refusal"` →
+fail‑closed) per the bundled `claude-api` skill. Step 4 (reputation‑via‑
+propagation) shipped separately. This document is both the design rationale *and*
+the record of what shipped. It obeys the non‑negotiables in [AGENTS.md](../AGENTS.md) §1 and
 DESIGN.md's closing rule: **the LLM lives only at the edges, never holds
 quantitative state or mutates world truth; the authored causal model is
 load‑bearing, the LLM proposes, the sim validates.** Every piece is flag‑gated off
@@ -29,8 +34,19 @@ by default, so the 140 golden metrics stay byte‑identical.
 - **Tests:** `test_merchant.py` (scripted rules, round cap, fail‑closed, the LLM
   adapter via a **stub client** — no network, and default `LLMMerchant` fails
   closed with no SDK), `test_loans.py` (gated‑off, strike, clamp, repayment,
-  default, determinism). Both in `check.py` (now 14 gates). `demo_merchant.py`
-  shows the loop end to end.
+  default, determinism). Both in `check.py`. `demo_merchant.py` shows the scripted
+  loop; `demo_llm_merchant.py` runs the **real edge negotiation** (scripted by
+  default, `--live` for the model) and `eval_llm_merchant.py` grades the model's
+  judgment on hand‑labelled deals + a prompt‑injection case (opt‑in `--live`,
+  offline no‑op, out of `check.py`).
+- **The Claude call (edge only, `LLMMerchant`):** one `client.messages.create`
+  with the cached persona as the `system` prefix, a **strict** `submit_decision`
+  tool (schema‑valid arguments, forced `tool_choice`) so the result is *data*, and
+  `claude-haiku-4-5` (the cheap bounded NPC judgment; `model=` overrides to Sonnet
+  5 for complex deals). Fail‑closed on refusal, error, missing SDK, or a malformed
+  reply — it can never fabricate an acceptance. Verified against the `claude-api`
+  skill; forced tool use is supported on haiku (a caller who overrides to a model
+  that rejects it simply gets a fail‑closed "closed for the day").
 
 **Assumed decisions** (made per the owner's "assume crucial steps" instruction; all
 reversible in config/data):

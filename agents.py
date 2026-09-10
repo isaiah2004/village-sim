@@ -19,6 +19,11 @@ from dataclasses import dataclass, field
 from config import Config, Resource, Season
 
 
+def _consumables(ctx: "Ctx"):
+    """The consumable resource ids this scenario tracks (frostpine: wood, food)."""
+    return ctx.consumables or (Resource.WOOD, Resource.FOOD)
+
+
 # ----- decisions the agent hands back to the World to execute -----
 @dataclass
 class GatherAction:
@@ -99,9 +104,15 @@ class Ctx:
     cfg: Config
     day: int
     season: Season
-    wood_need: float                    # current-season wood consumption / day
-    food_need: float
+    wood_need: float                    # compat alias: needs["wood"] (frostpine)
+    food_need: float                    # compat alias: needs["food"] (frostpine)
     ref_price: dict                     # Resource -> reference market price
+    # DESIGN.md: resources are data. `needs` is the per-agent daily consumption of
+    # each consumable this day (base_consume x the active driver's phase); the agent
+    # economic loops iterate `consumables`, so they work for any scenario's goods.
+    needs: dict = field(default_factory=dict)         # resource id -> units/day
+    consumables: tuple = ()                            # consumable resource ids
+    yield_mult: dict = field(default_factory=dict)     # resource id -> today's gather-yield multiplier (driver)
     # Player-only privileged channels from the AIC. Villagers see empty dicts.
     bounty: dict = field(default_factory=dict)        # internal payout rate (used by strategies, not shown in UI)
     fair_price: dict = field(default_factory=dict)    # AIC's fair-value estimate (shown to player as guidance)
@@ -162,12 +173,15 @@ class Agent:
         return self.tool_durability_left > 0
 
     # ---------- economic valuation ----------
-    def daily_need(self, r: Resource, ctx: Ctx) -> float:
-        if r == Resource.WOOD:
+    def daily_need(self, r, ctx: Ctx) -> float:
+        if ctx.needs:
+            return ctx.needs.get(r, 0.0)
+        if r == Resource.WOOD:                 # legacy fallback (no scenario needs)
             return ctx.wood_need
         if r == Resource.FOOD:
             return ctx.food_need
         return 0.0
+
 
     def fear(self, r: Resource) -> float:
         """Clamped perceived-scarcity belief (0..1) for resource r."""
@@ -194,14 +208,16 @@ class Agent:
         return base * (1.0 + (self.cfg.fear_price_mult - 1.0) * self.fear(r))
 
     def expected_gather_yield(self, r: Resource, ctx: Ctx) -> float:
-        y = self.cfg.base_yield[r] * self.cfg.season_yield_mult[ctx.season] * self.skill[r]
+        mult = ctx.yield_mult.get(r, self.cfg.season_yield_mult[ctx.season]) if ctx.yield_mult \
+            else self.cfg.season_yield_mult[ctx.season]
+        y = self.cfg.base_yield[r] * mult * self.skill[r]
         if self.has_tool:
             y *= (1.0 + self.cfg.tool_yield_bonus)
         return y
 
     # ---------- belief update ----------
     def update_belief(self, own_unmet: dict, village_unmet: dict,
-                      rumour: dict | None = None) -> None:
+                      rumour: dict | None = None, consumables: tuple = ()) -> None:
         """
         Fear rises with felt shortage (own > witnessed) and decays otherwise.
 
@@ -213,7 +229,7 @@ class Agent:
         that actually had to travel, not an oracle.
         """
         rumour = rumour or {}
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in (consumables or (Resource.WOOD, Resource.FOOD)):
             personal = own_unmet.get(r, 0.0)
             witness = max(0.0, village_unmet.get(r, 0.0) - personal)
             delta = (self.cfg.fear_personal_gain * personal
@@ -227,7 +243,7 @@ class Agent:
     def consume_daily(self, ctx: Ctx):
         """Burn the day's food + wood. Returns dict resource -> (consumed_lots, shortfall)."""
         result = {}
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             need = self.daily_need(r, ctx)
             consumed = self.take(r, need)
             got = sum(q for _, q in consumed)
@@ -266,13 +282,13 @@ class Agent:
         the AIC's bounty -- they're not nudged by it.
         """
         cover = {}
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             cover[r] = self._projected_reserve(r) / max(self.daily_need(r, ctx), 1e-6)
         worst = min(cover, key=lambda r: cover[r])
         if cover[worst] < self.cfg.reserve_buffer_days:
             return worst
         best, best_profit = None, 0.0
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             if self._projected_reserve(r) >= self.target_reserve(r, ctx) * self.cfg.surplus_gather_cap:
                 continue
             unit_value = ctx.ref_price.get(r, 0.0)   # NO bounty term for villagers
@@ -284,7 +300,7 @@ class Agent:
     # ---------- trading intents ----------
     def make_orders(self, ctx: Ctx) -> list[Order]:
         orders: list[Order] = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             reserve = self.qty(r)
             target = self.target_reserve(r, ctx)
             if reserve < target:
@@ -387,7 +403,7 @@ class MarketMaker(Agent):
 
     def make_orders(self, ctx) -> list[Order]:
         orders = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             ref = ctx.ref_price.get(r, self.cfg.intrinsic_value[r])
             intrinsic = self.cfg.intrinsic_value[r]
             floor = intrinsic * self.cfg.price_floor_mult
@@ -432,7 +448,7 @@ class Merchant(Agent):
 
     def make_orders(self, ctx) -> list[Order]:
         orders = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             ref = ctx.ref_price.get(r, self.cfg.intrinsic_value[r])
             stock = self.qty(r)
             target = self.target_reserve(r, ctx)
@@ -521,7 +537,7 @@ class ResponsiveStrategy(Strategy):
 
     def make_orders(self, ag, ctx):
         orders = []
-        for r in (Resource.WOOD, Resource.FOOD):
+        for r in _consumables(ctx):
             reserve, target = ag.qty(r), ag.target_reserve(r, ctx)
             if reserve > target:
                 ask = max(ag.cfg.intrinsic_value[r] * 0.7, ag.marginal_value(r, ctx, reserve))

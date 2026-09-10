@@ -97,7 +97,7 @@ class Accountant:
             self.state.scarcity = {r: 0.0 for r in Resource}
             return
         n = len(agents)
-        today_mult = self.cfg.season_yield_mult[self.cfg.season_for_day(day)]
+        driver = self.cfg.scenario.driver           # yield modulation is data (DESIGN.md)
         # Price every registered need uniformly -- the need carries its own
         # requirement (severity source), so there is no per-resource logic here.
         for need in self.needs:
@@ -106,9 +106,10 @@ class Accountant:
             projected_consumption = self._projected_consumption(need, day, n)
             # The AIC's view of capacity is pessimistic so it doesn't behave as
             # a perfect oracle: it under-estimates how much villagers can produce.
+            today_mult = driver.yield_mult(day, r)
             base_capacity = (self._prod_ema[r] / max(today_mult, 1e-6)) * self.cfg.accountant_pessimism
             projected_production = sum(
-                base_capacity * self.cfg.season_yield_mult[self.cfg.season_for_day(d)]
+                base_capacity * driver.yield_mult(d, r)
                 for d in range(day, day + self.cfg.accountant_horizon)
             )
             deficit = projected_consumption - (reserves + projected_production)
@@ -186,8 +187,8 @@ class Accountant:
                 paid_here += amount
                 # record the felt "why": this producer met THIS consumer's need
                 self.state.contrib_events.append(
-                    (producer_id, consumer_id, consumer_kind, resource,
-                     amount, rate, season.value))
+                    (producer_id, consumer_id, consumer_kind, resource, amount, rate,
+                     season.value if hasattr(season, "value") else season))
 
         for lot_id, qty in consumed_lots:
             budget_left = self.cfg.accountant_budget_per_day - self.state.paid_today

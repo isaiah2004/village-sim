@@ -55,6 +55,17 @@ class World:
                               existing scenarios keep working.
         """
         self.cfg = cfg
+        # DESIGN.md: scenarios are DATA. Attach the live Scenario (from cfg if
+        # make_config set it, else by name) BEFORE anything reads its axes, and
+        # expose the driver + resource sets the mechanics iterate. A bare Config()
+        # resolves to "frostpine" -> the historical baseline, byte-identical.
+        import scenario as _scen
+        self.scenario = getattr(cfg, "scenario", None) or _scen.get_scenario(
+            getattr(cfg, "scenario_name", "frostpine"))
+        cfg.scenario = self.scenario
+        self.driver = self.scenario.driver
+        self.resource_ids = tuple(self.scenario.resource_ids())
+        self.consumable_ids = tuple(self.scenario.consumable_ids())
         self.rng = random.Random(cfg.seed)
         self.lineage = LineageGraph()
         self.market = CallMarket()
@@ -155,7 +166,13 @@ class World:
         bounty is visible before the player makes decisions.
         """
         self.day = day
-        season = self.cfg.season_for_day(day)
+        # The active driver's phase drives time, needs, and gather yields (DESIGN.md
+        # "Drivers"). For frostpine the phase name is the season and these values
+        # reproduce the historical season tables exactly (byte-identical).
+        season = self.driver.phase_name(day)
+        needs = {r: self.scenario.resource(r).base_consume * self.driver.consume_mult(day, r)
+                 for r in self.consumable_ids}
+        ymult = {r: self.driver.yield_mult(day, r) for r in self.resource_ids}
         # Refresh stamina for every agent NOW (not during production phase), so
         # the UI shows the correct stamina BEFORE the player plans actions.
         for ag in self.agents:
@@ -176,9 +193,10 @@ class World:
             cfg=self.cfg,
             day=day,
             season=season,
-            wood_need=self.cfg.wood_per_day[season],
-            food_need=self.cfg.food_per_day,
+            wood_need=needs.get(Resource.WOOD, 0.0),
+            food_need=needs.get(Resource.FOOD, 0.0),
             ref_price=dict(self.ref_price),
+            needs=needs, consumables=self.consumable_ids, yield_mult=ymult,
             bounty={},
             fair_price={},
         )
@@ -188,9 +206,10 @@ class World:
             cfg=self.cfg,
             day=day,
             season=season,
-            wood_need=self.cfg.wood_per_day[season],
-            food_need=self.cfg.food_per_day,
+            wood_need=needs.get(Resource.WOOD, 0.0),
+            food_need=needs.get(Resource.FOOD, 0.0),
             ref_price=dict(self.ref_price),
+            needs=needs, consumables=self.consumable_ids, yield_mult=ymult,
             bounty=dict(self.accountant.state.bounty),
             fair_price=dict(self.accountant.state.fair_price),
         )
@@ -378,7 +397,8 @@ class World:
         return total
 
     def _do_gather(self, ag, r: Resource, ctx: Ctx) -> float:
-        base = self.cfg.base_yield[r] * self.cfg.season_yield_mult[ctx.season] * ag.skill[r]
+        mult = ctx.yield_mult.get(r, 1.0) if ctx.yield_mult else self.cfg.season_yield_mult[ctx.season]
+        base = self.cfg.base_yield[r] * mult * ag.skill[r]
         # A summer food blight (flag-gated OFF by default) cuts food gather yield
         # during its season -- the second-crisis lever. Wood is untouched; only
         # food produced in the blight season shrinks, so a food shortfall builds
@@ -560,7 +580,7 @@ class World:
             for ag in self.agents:
                 if ag.is_player or ag.is_market_maker:
                     continue
-                ag.update_belief(self._per_agent_unmet.get(ag.id, {}), self.village_unmet)
+                ag.update_belief(self._per_agent_unmet.get(ag.id, {}), self.village_unmet, consumables=self.consumable_ids)
             return
 
         # 1. real personal shortage = a first-hand independent witness of scarcity
@@ -593,7 +613,7 @@ class World:
             if ag.is_player or ag.is_market_maker:
                 continue
             rumour = {r: self.prop.scarcity(ag.id, r) for r in (Resource.WOOD, Resource.FOOD)}
-            ag.update_belief(self._per_agent_unmet.get(ag.id, {}), _ZERO_UNMET, rumour=rumour)
+            ag.update_belief(self._per_agent_unmet.get(ag.id, {}), _ZERO_UNMET, rumour=rumour, consumables=self.consumable_ids)
 
         villagers = [a for a in self.agents if not a.is_player and not a.is_market_maker]
         vids = {a.id for a in villagers}

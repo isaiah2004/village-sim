@@ -38,7 +38,7 @@ class Metrics:
     def record(self, world, ctx) -> None:
         self.days.append(ctx.day)
         s = self.series
-        s["season"].append(ctx.season.value)
+        s["season"].append(ctx.season.value if hasattr(ctx.season, "value") else ctx.season)
         s["wood_price"].append(world.ref_price[Resource.WOOD])
         s["food_price"].append(world.ref_price[Resource.FOOD])
         s["wood_reserve"].append(sum(a.qty(Resource.WOOD) for a in world.agents))

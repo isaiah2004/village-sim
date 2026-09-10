@@ -44,6 +44,17 @@ _RES_VALUES = {r.value for r in Resource}
 _SEASON_VALUES = {s.value for s in Season}
 
 
+def _rid(r):
+    """Resource id as a plain string (tolerant of enum or already-string ids)."""
+    return r.value if hasattr(r, "value") else r
+
+
+def _res(k):
+    """Decode a resource id: the core enum member when known, else the plain
+    string (scenario resources like 'fish' are strings with no enum member)."""
+    return Resource(k) if k in _RES_VALUES else k
+
+
 # ---------------------------------------------------------------- enum helpers
 def _res_keyed(d: dict) -> dict:
     """{Resource: v} -> {str: v}"""
@@ -123,7 +134,7 @@ def _dec_claim(x: list) -> Claim:
 def enc_lineage(lin) -> dict:
     return {
         "next_id": lin._next_id,
-        "lots": [[l.id, l.resource.value, l.producer_id, l.tick, l.kind,
+        "lots": [[l.id, _rid(l.resource), l.producer_id, l.tick, l.kind,
                   [[pid, w] for pid, w in l.parents], l.qty_produced, l.credit_paid]
                  for l in lin.lots.values()],
     }
@@ -132,7 +143,7 @@ def enc_lineage(lin) -> dict:
 def dec_lineage(lin, d: dict) -> None:
     lin.lots = {}
     for lid, res, pid, tick, kind, parents, qty, credit in d["lots"]:
-        lin.lots[lid] = Lot(lid, Resource(res), pid, tick, kind,
+        lin.lots[lid] = Lot(lid, _res(res), pid, tick, kind,
                             [(p, w) for p, w in parents], qty, credit)
     lin._next_id = d["next_id"]
 

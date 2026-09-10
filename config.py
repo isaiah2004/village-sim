@@ -39,6 +39,13 @@ SEASON_ORDER = (Season.SPRING, Season.SUMMER, Season.AUTUMN, Season.WINTER)
 
 @dataclass
 class Config:
+    # ----- scenario (DESIGN.md "scenarios are DATA") -----
+    # The named world archetype this config was built from. `scenario.make_config`
+    # attaches the live Scenario object as `cfg.scenario` (a non-field attribute, so
+    # persistence serializes only the name and the world reattaches by name on load).
+    # Defaults to "frostpine" so a bare Config() is the historical baseline.
+    scenario_name: str = "frostpine"
+
     # ----- time -----
     season_length: int = 30          # days per season
     years: float = 2.0               # how long to run

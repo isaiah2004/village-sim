@@ -12,6 +12,9 @@ scenario purely through the SimCore contract -- no per-scenario code, no crash:
   3. COMMANDS    -- the typed commands map to contract intents for a novel world
      (gather/sell/build), and a player's gathering of the crisis good measurably
      helps vs. doing nothing (the body is actually playable, not inert).
+  4. LAYER3-FINANCING -- the body drives the whole Layer-3 loop: build a reputation
+     (propagated deeds), negotiate a loan with the merchant, and the sim funds and
+     founds the intervention; an unproven borrower is declined.
 
 Dependency-free; exit 0 = all pass.
 """
@@ -77,10 +80,47 @@ def test_commands_have_effect() -> list:
     return fails
 
 
+def test_layer3_financing() -> list:
+    """The generic body drives the WHOLE Layer-3 loop on a scenario: build a
+    reputation (deeds propagate), negotiate a loan with the merchant to fund an
+    intervention, and the sim's hard gate applies it -- a mill founded, a loan
+    recorded. An unproven borrower is declined by the merchant (the soft gate)."""
+    import contract as C
+    fails = []
+    core = view_play._core("frostpine")
+    p = core.world.by_id["PLAYER"]
+    p.bonus_earned = 300.0                       # a strong track record of deeds
+    core.begin_turn()
+    for _ in range(45):                          # let word of the deed spread
+        if core.done:
+            break
+        core.begin_turn(); core.submit(C.Gather("wood")); core.commit_turn()
+    core.begin_turn()
+    p.money = 5.0                                # broke -> must finance via a loan
+    status = view_play.negotiate_deal(core, "found_mill")
+    core.commit_turn()
+    resolved = [e for e in core.drain_events() if isinstance(e, C.DealResolved)]
+    me = next(a for a in core.snapshot().agents if a.is_player)
+    if not (resolved and resolved[0].struck):
+        fails.append(f"financing: deal did not resolve struck ({status})")
+    if me.woodlot_level < 1:
+        fails.append("financing: the loan-funded mill was not founded")
+    if not core.snapshot().loans:
+        fails.append("financing: no loan was recorded")
+    # an unproven borrower is turned away by the merchant (soft gate), no deal
+    core2 = view_play._core("tidewater")
+    core2.begin_turn()
+    st = view_play.negotiate_deal(core2, "haul_relief")
+    if "no deal" not in st:
+        fails.append(f"financing: an unproven borrower should be declined ({st})")
+    return fails
+
+
 def main() -> int:
     all_fails = []
     tests = (("PLAYS-ALL", test_plays_all), ("RENDERS", test_renders),
-             ("COMMANDS", test_commands_have_effect))
+             ("COMMANDS", test_commands_have_effect),
+             ("LAYER3-FINANCING", test_layer3_financing))
     for name, fn in tests:
         fails = fn()
         print(f"[{'ok' if not fails else 'FAIL'}] {name}")

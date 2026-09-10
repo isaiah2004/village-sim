@@ -209,3 +209,23 @@ Docs-only; no code, golden.json UNCHANGED. check.py green, 21 gates.
 PRs opened (each its own, all merged to main): #5 playable view, #6 cross-scenario,
 #7 intervention library, #8 modularity breadth, #9 JSON seam, #10 docs. (Phase-1
 integration of #2/#3/#4 landed directly on main.)
+
+## Post-satisfactory continuation ("keep going")
+
+### Item 7 — Layer-3 financing wired into the generic playable body ✓ (branch: claude/layer3-in-body)
+
+Closes the frontier item "wiring negotiation into the interactive bodies" for the
+scenario-agnostic body. `view_play.py` now drives the WHOLE Layer-3 loop on any
+world through the contract:
+  * _core enables interventions + capital goods + loans + reward-at-fair-value +
+    reputation propagation, so the body plays the full game (not just gathering).
+  * dashboard shows your standing (descriptor + value) and any loans owed.
+  * new `deal <key>` command: negotiate a loan with the deterministic ScriptedMerchant
+    (merchant.negotiate + make_view_builder) to fund an intervention, then submit
+    AcceptDeal -- the sim is the hard gate. No LLM in this path (offline, deterministic).
+
+Verified end-to-end: build reputation (deeds propagate to reach 1.0), broke player
+negotiates 80 at 15%, sim funds + founds the mill (woodlot Lv1, loan recorded); an
+unproven borrower is declined by the merchant. New sub-test LAYER3-FINANCING in
+test_view_play.py. golden.json UNCHANGED (generic body config + a new command; the
+sim/contract/golden untouched). check.py green, 21 gates.

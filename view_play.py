@@ -12,10 +12,13 @@ scenario" bar met at the terminal: one body, every world, zero per-scenario code
     python view_play.py tidewater --demo    # scripted auto-run of one scenario
 
 Commands (interactive): 'g <good>' gather, 'b <good> [qty]' buy, 's <good> [qty]'
-sell, 'build' establish/upgrade capital, 'do <key>' perform an intervention,
-'warn <good>' speak a scarcity claim, [enter] end the day, 'f' fast-forward a day,
-'x' quit. It talks only to SimCore -- the frostpine game (game.py / view_text.py)
-is untouched; this is a separate body proving the skin is swappable per world.
+sell, 'build' establish/upgrade capital, 'do <key>' perform an intervention from
+your own capital, 'deal <key>' negotiate a loan (a deterministic merchant) to fund
+one, 'warn <good>' speak a scarcity claim, [enter] end the day, 'f' fast-forward a
+day, 'x' quit. It talks only to SimCore -- the frostpine game (game.py /
+view_text.py) is untouched; this is a separate body proving the skin is swappable
+per world, now driving the whole Layer-3 loop (reputation-gated interventions +
+loan financing) on ANY scenario.
 """
 from __future__ import annotations
 
@@ -30,6 +33,10 @@ from simcore import SimCore
 def _core(name: str, propagation: bool = True) -> SimCore:
     cfg = scen.make_config(name)
     cfg.interventions_enabled = True         # let a player attempt Layer-3 actions
+    cfg.capital_goods_enabled = True         # ...including founding capital goods
+    cfg.loans_enabled = True                 # ...financed by a negotiated loan
+    cfg.reward_at_fair_value = True          # crises pay fair value, so deeds are worth doing
+    cfg.reputation_propagation = True        # standing = how far word of your deeds has reached
     return SimCore(config=cfg, propagation=propagation,
                    population=scen.build_population(scen.get_scenario(name)))
 
@@ -71,7 +78,34 @@ def dashboard(core: SimCore) -> str:
         else:
             lines.append("  interventions: " + "; ".join(f"{k} (locked: {reason})"
                                                           for k, reason, ok in ivs[:2]))
+    # Layer 3 financing: your standing (how far word of your deeds has reached) and
+    # any loans you owe. Standing gates both interventions and a merchant's terms.
+    rep = core.reputation("PLAYER")
+    lines.append(f"  standing: {rep.descriptor} ({rep.standing:.0f})")
+    if snap.loans:
+        lines.append("  loans: " + ", ".join(
+            f"{l.balance:.0f} owed to {l.lender_id}" for l in snap.loans))
     return "\n".join(lines)
+
+
+def negotiate_deal(core: SimCore, key: str, ceiling: float = 0.30) -> str:
+    """Negotiate a loan (deterministic ScriptedMerchant) to fund intervention `key`,
+    then submit it as an AcceptDeal -- the sim is the hard gate. Layer 3's financing
+    loop, driven from the generic body through the contract. Returns a status line."""
+    import merchant as M
+    row = next((iv for iv in core.interventions() if iv[0] == key), None)
+    if row is None:
+        return f"no such intervention {key!r}"
+    principal = row[3]                                   # the intervention's capital cost
+    opening = M.DealProposal(key, principal, 0.10, 60)
+    out = M.negotiate(M.ScriptedMerchant(), M.make_view_builder(core),
+                      opening, M.accept_up_to(ceiling))
+    if not out.struck:
+        return f'merchant: "{out.line}"  (no deal: {out.reason})'
+    t = out.terms
+    core.submit(C.AcceptDeal(t.key, t.principal, t.interest, t.term_days))
+    return (f'merchant: "{out.line}"  -> borrow {t.principal:.0f} at {t.interest:.0%} '
+            f"to fund {key} (submitted; applied on end-of-day at the sim's hard gate)")
 
 
 # ------------------------------------------------------------------ commands
@@ -103,6 +137,9 @@ def apply(core: SimCore, cmd: str) -> bool:
         core.submit(C.BuildWoodlot())
     elif verb == "do" and args:
         core.submit(C.Perform(args[0]))
+    elif verb == "deal" and args:
+        print("  " + negotiate_deal(core, args[0],
+                                    float(args[1]) if len(args) > 1 else 0.30))
     elif verb == "warn" and args and args[0] in goods:
         try:
             core.submit(C.Speak(args[0], 0.85, True, "player:warning", 0.9))
@@ -118,7 +155,7 @@ def play(name: str) -> None:
     core = _core(name)
     core.begin_turn()
     print(f"Playing '{name}'. Commands: g <good> / b|s <good> [qty] / build / "
-          "do <key> / warn <good> / [enter] end day / f / x quit")
+          "do <key> / deal <key> / warn <good> / [enter] end day / f / x quit")
     while not core.done:
         print("\n" + dashboard(core))
         try:

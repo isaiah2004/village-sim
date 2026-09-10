@@ -105,6 +105,22 @@ def _propagation_scenarios():
     ]
 
 
+def _named_scenarios():
+    """The data-defined world archetypes (DESIGN.md "scenarios are DATA"). Each
+    runs headlessly straight from its scenario name -- no config surgery. Additive:
+    they add new golden rows (their own resource/phase-keyed metrics) and leave
+    frostpine's rows untouched. This anchors tidewater/guildhall/emberforge so any
+    future refactor that changes their numbers is caught too."""
+    return ["tidewater", "guildhall", "emberforge"]
+
+
+def _run_named(name: str):
+    import scenario as _scen
+    world = _scen.make_world(name, player_strategy="idle")
+    world.run()
+    return world.metrics
+
+
 def collect() -> dict:
     """Run every scenario and return {name: summary_dict} with rounded floats."""
     cfg = Config()
@@ -115,6 +131,8 @@ def collect() -> dict:
         out[name] = _round(_run_propagation(cfg, strat, inject).summary())
     for name, strat, mutate in _need_scenarios():
         out[name] = _round(_run_need(cfg, strat, mutate).summary())
+    for name in _named_scenarios():
+        out[f"SCENARIO_{name.upper()}"] = _round(_run_named(name).summary())
     return out
 
 

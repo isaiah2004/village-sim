@@ -663,7 +663,14 @@ class Player(Agent):
 
     def __init__(self, agent_id: str, cfg: Config, rng, strategy="responsive"):
         super().__init__(agent_id, cfg, rng)
-        self.skill = {Resource.WOOD: 1.3, Resource.FOOD: 1.2}
+        # The player is a somewhat-better-than-average producer of every
+        # consumable. frostpine's historical values (wood 1.3, food 1.2) are
+        # preserved exactly; any other scenario's goods get a flat competent
+        # skill, so this is generic -- no per-scenario branching.
+        _, cons = _scenario_ids(cfg)
+        _historical = {"wood": 1.3, "food": 1.2}
+        self.skill = {r: _historical.get(r.value if hasattr(r, "value") else r, 1.25)
+                      for r in cons}
         # accept either a registry name or an actual Strategy instance
         if isinstance(strategy, str):
             strat = STRATEGIES.get(strategy)

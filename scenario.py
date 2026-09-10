@@ -231,10 +231,99 @@ def _tidewater() -> Scenario:
     )
 
 
+# ================================================================= guildhall
+# A weaving town whose economy is stabilized by a GUILD. Proves the MARKET MODEL
+# is a data axis: MarketSpec.model == "guild" means the guild hall posts a
+# standing support bid (buy up to `quota` of cloth at a capped `price`), putting
+# a floor under weavers when a glut would otherwise collapse the price; supply
+# beyond the quota overflows to the ordinary call auction. Cloth is the crisis
+# good (over-made in the glut season); grain is the comfortable staple.
+def _guildhall() -> Scenario:
+    cloth_yield = {"boom": 1.0, "fair": 1.2, "glut": 2.0, "lean": 0.8}
+    grain_yield = {"boom": 1.1, "fair": 1.1, "glut": 1.0, "lean": 0.9}
+    phases = tuple(
+        Phase(name=name, length=30,
+              yield_mult={"cloth": cloth_yield[name], "grain": grain_yield[name]},
+              consume_mult={"cloth": 1.0, "grain": 1.0})
+        for name in ("boom", "fair", "glut", "lean")
+    )
+    driver = Driver(name="trade_seasons", phases=phases)
+    # Cloth is structurally OVER-made (far more woven than the town consumes), so
+    # in a glut its open-market price would collapse toward the hard floor -- the
+    # weavers' wage evaporates. Grain is a comfortable, balanced staple.
+    resources = (
+        ResourceSpec("cloth", intrinsic_value=5.0, consumable=True, base_yield=3.2, base_consume=0.6),
+        ResourceSpec("grain", intrinsic_value=6.0, consumable=True, base_yield=2.5, base_consume=1.0),
+    )
+    needs = (NeedSpec("cloth_need", "cloth", rewarded=True),
+             NeedSpec("grain_need", "grain", rewarded=False))
+    population = (PopSpec("villager", 8, "w"),                       # weavers
+                 PopSpec("dependent", 3, "g", kwargs={"produces": "grain"}),
+                 PopSpec("market_maker", 1, "mk",                    # the guild hall
+                         kwargs={"daily_volume": 16.0, "target_inventory": 40.0}))
+    # the guild floor: buy up to 60 cloth/day at 4.5 (below intrinsic 5.0) so a
+    # glut can't drive the price through the floor -- weavers keep a fair wage.
+    market = MarketSpec("guild", params={"resource": "cloth", "price": 4.5, "quota": 60.0})
+    return Scenario(
+        name="guildhall", resources=resources, driver=driver, needs=needs,
+        market=market, population=population,
+        primary_resource="cloth", crisis_phase="glut",
+    )
+
+
+# ================================================================= emberforge
+# A forge town with MULTI-RESOURCE STRUCTURAL SCARCITY relieved by CAPITAL. Iron
+# is the crisis good: it is needed daily but gathered far slower than it is
+# consumed (base_yield 0.8 < base_consume 1.0), so hand-labour alone can never
+# keep up -- a permanent deficit, worst in "war" when iron demand doubles. The
+# relief is a CAPITAL GOOD: a forge (built from ore, fuelled by charcoal) that
+# smelts iron far faster than gathering. Proves the capital-goods system is
+# generic DATA: frostpine's woodlot and this forge are the same machinery.
+def _emberforge() -> Scenario:
+    iron_consume = {"peace": 1.0, "muster": 1.3, "war": 2.0, "recovery": 0.8}
+    phases = tuple(
+        Phase(name=name, length=30,
+              yield_mult={},                                  # scarcity is structural, not cyclical
+              consume_mult={"iron": iron_consume[name], "charcoal": 1.0, "ore": 1.0})
+        for name in ("peace", "muster", "war", "recovery")
+    )
+    driver = Driver(name="forge_cycle", phases=phases)
+    resources = (
+        # iron: needed daily, gathered far too slowly by hand -> structural deficit.
+        ResourceSpec("iron", intrinsic_value=8.0, consumable=True, base_yield=0.8, base_consume=1.0),
+        # ore: the raw input the forge is built from (no daily need of its own).
+        ResourceSpec("ore", intrinsic_value=3.0, consumable=True, base_yield=2.0, base_consume=0.0),
+        # charcoal: fuel; a mild daily need and the forge's upkeep.
+        ResourceSpec("charcoal", intrinsic_value=4.0, consumable=True, base_yield=2.5, base_consume=0.5),
+        # forge: the capital good (non-consumable asset).
+        ResourceSpec("forge", intrinsic_value=40.0, consumable=False),
+    )
+    needs = (NeedSpec("iron_need", "iron", rewarded=True),
+             NeedSpec("charcoal_need", "charcoal", rewarded=False))
+    # the forge: built from ore, fuelled by charcoal, smelts iron. output_per_level
+    # (1.2) comfortably exceeds the per-smith hand yield (0.8), so a few forges
+    # turn a chronic deficit into a surplus -- capital relieving structural scarcity.
+    capital = (CapitalSpec("forge", output_resource="iron", output_per_level=1.2,
+                           upkeep_resource="charcoal", upkeep_per_level=0.8,
+                           build_cost_resource="ore", build_cost=6.0, max_level=5),)
+    population = (PopSpec("villager", 8, "s"),                        # smiths (gather iron + charcoal)
+                 PopSpec("dependent", 3, "m", kwargs={"produces": "ore"}),  # miners feed the forges
+                 PopSpec("market_maker", 1, "mk",
+                         kwargs={"daily_volume": 16.0, "target_inventory": 40.0}))
+    return Scenario(
+        name="emberforge", resources=resources, driver=driver, needs=needs,
+        market=MarketSpec("call_auction"), population=population,
+        primary_resource="iron", crisis_phase="war", capital=capital,
+        tunables={"capital_goods_enabled": True},
+    )
+
+
 # The scenario registry -- add a world archetype by adding a builder here (data).
 _REGISTRY = {
     "frostpine": _frostpine,
     "tidewater": _tidewater,
+    "guildhall": _guildhall,
+    "emberforge": _emberforge,
 }
 
 

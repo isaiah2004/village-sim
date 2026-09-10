@@ -372,6 +372,79 @@ def _emberforge() -> Scenario:
     )
 
 
+# ================================================================= dustveil
+# A drought town: a CYCLICAL SUPPLY crisis relieved by CAPITAL, both pure data.
+# Water is gathered (drawn from a dwindling spring) and collapses in the "drought"
+# phase; grain is a comfortable staple. A cistern (built from grain, fuelled by
+# grain, yielding water) stores the wet season against the dry -- the driver-driven
+# crisis and the capital relief are the same machinery as frostpine's woodlot and
+# tidewater's tides, combined in one world with no new code.
+def _dustveil() -> Scenario:
+    water_yield = {"wet": 1.4, "fair": 1.0, "dry": 0.6, "drought": 0.2}
+    phases = tuple(
+        Phase(name=n, length=30,
+              yield_mult={"water": water_yield[n], "grain": 1.0},
+              consume_mult={"water": 1.0, "grain": 1.0})
+        for n in ("wet", "fair", "dry", "drought")
+    )
+    driver = Driver(name="arid_seasons", phases=phases)
+    resources = (
+        ResourceSpec("water", intrinsic_value=5.0, consumable=True, base_yield=1.6, base_consume=1.0),
+        ResourceSpec("grain", intrinsic_value=6.0, consumable=True, base_yield=2.5, base_consume=1.0),
+        ResourceSpec("cistern", intrinsic_value=55.0, consumable=False),
+    )
+    needs = (NeedSpec("water_thirst", "water", rewarded=True),
+             NeedSpec("grain_hunger", "grain", rewarded=False))
+    capital = (CapitalSpec("cistern", output_resource="water", output_per_level=1.4,
+                           upkeep_resource="grain", upkeep_per_level=0.4,
+                           build_cost_resource="grain", build_cost=7.0, max_level=5),)
+    population = (PopSpec("villager", 8, "w"),                        # water-drawers
+                 PopSpec("dependent", 3, "f", kwargs={"produces": "grain"}),  # farmers
+                 PopSpec("market_maker", 1, "mk",
+                         kwargs={"daily_volume": 16.0, "target_inventory": 40.0}))
+    return Scenario(
+        name="dustveil", resources=resources, driver=driver, needs=needs,
+        market=MarketSpec("call_auction"), population=population,
+        primary_resource="water", crisis_phase="drought", capital=capital,
+        tunables={"capital_goods_enabled": True},
+    )
+
+
+# ================================================================ fallowmere
+# A poisoned-harvest town: a SUBSTITUTION crisis, pure data. Grain is the everyday
+# staple; roots are a hardier but slower fallback. In the "blight" phase the grain
+# harvest is poisoned -- its yield collapses AND the town's demand SWITCHES to roots
+# (roots consume_mult spikes). Roots can't be dug fast enough for everyone at once,
+# so a roots shortage bites exactly in blight and the index rewards whoever digs
+# them. Two goods, one driver flipping yield on one and demand onto the other --
+# no capital, no new logic, just values.
+def _fallowmere() -> Scenario:
+    grain_yield = {"seed": 1.1, "green": 1.2, "blight": 0.2, "harvest": 1.3}
+    roots_demand = {"seed": 0.6, "green": 0.6, "blight": 2.2, "harvest": 0.6}
+    phases = tuple(
+        Phase(name=n, length=30,
+              yield_mult={"grain": grain_yield[n], "roots": 1.0},
+              consume_mult={"grain": 1.0, "roots": roots_demand[n]})
+        for n in ("seed", "green", "blight", "harvest")
+    )
+    driver = Driver(name="harvest_cycle", phases=phases)
+    resources = (
+        ResourceSpec("roots", intrinsic_value=5.0, consumable=True, base_yield=1.4, base_consume=0.6),
+        ResourceSpec("grain", intrinsic_value=6.0, consumable=True, base_yield=2.5, base_consume=1.0),
+    )
+    needs = (NeedSpec("roots_need", "roots", rewarded=True),
+             NeedSpec("grain_need", "grain", rewarded=False))
+    population = (PopSpec("villager", 8, "d"),                        # diggers (roots + grain)
+                 PopSpec("dependent", 3, "g", kwargs={"produces": "grain"}),  # granary hands
+                 PopSpec("market_maker", 1, "mk",
+                         kwargs={"daily_volume": 16.0, "target_inventory": 40.0}))
+    return Scenario(
+        name="fallowmere", resources=resources, driver=driver, needs=needs,
+        market=MarketSpec("call_auction"), population=population,
+        primary_resource="roots", crisis_phase="blight",
+    )
+
+
 # The scenario registry -- add a world archetype by adding a builder here (data).
 _REGISTRY = {
     "frostpine": _frostpine,
@@ -379,6 +452,8 @@ _REGISTRY = {
     "guildhall": _guildhall,
     "plaguewatch": _plaguewatch,
     "emberforge": _emberforge,
+    "dustveil": _dustveil,
+    "fallowmere": _fallowmere,
 }
 
 

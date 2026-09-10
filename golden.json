@@ -143,6 +143,22 @@
     "winter_max_wood_price": 25.0,
     "winter_village_unmet_wood": 4.643303
   },
+  "SCENARIO_DUSTVEIL": {
+    "drought_max_water_price": 25.0,
+    "drought_village_unmet_water": 182.823517,
+    "flag_days": 0,
+    "max_village_fear_water": 1.0,
+    "max_water_price": 25.0,
+    "mean_village_fear_water": 0.244183,
+    "mean_water_price": 8.230573,
+    "player_bonus_earned": 0.0,
+    "player_final_money": 150.0,
+    "shortage_days": 237,
+    "total_penalty": 0.0,
+    "total_reward_paid": 531.672436,
+    "village_unmet_grain": 0.0,
+    "village_unmet_water": 197.259683
+  },
   "SCENARIO_EMBERFORGE": {
     "flag_days": 0,
     "max_iron_price": 40.0,
@@ -159,6 +175,22 @@
     "village_unmet_ore": 0.0,
     "war_max_iron_price": 40.0,
     "war_village_unmet_iron": 567.298014
+  },
+  "SCENARIO_FALLOWMERE": {
+    "blight_max_roots_price": 25.0,
+    "blight_village_unmet_roots": 57.561993,
+    "flag_days": 0,
+    "max_roots_price": 25.0,
+    "max_village_fear_roots": 0.96924,
+    "mean_roots_price": 7.718756,
+    "mean_village_fear_roots": 0.207933,
+    "player_bonus_earned": 0.0,
+    "player_final_money": 150.0,
+    "shortage_days": 237,
+    "total_penalty": 0.0,
+    "total_reward_paid": 191.821263,
+    "village_unmet_grain": 26.168168,
+    "village_unmet_roots": 66.201993
   },
   "SCENARIO_GUILDHALL": {
     "flag_days": 0,

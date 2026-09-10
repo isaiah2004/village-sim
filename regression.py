@@ -111,7 +111,7 @@ def _named_scenarios():
     they add new golden rows (their own resource/phase-keyed metrics) and leave
     frostpine's rows untouched. This anchors tidewater/guildhall/emberforge so any
     future refactor that changes their numbers is caught too."""
-    return ["tidewater", "guildhall", "plaguewatch", "emberforge"]
+    return ["tidewater", "guildhall", "plaguewatch", "emberforge", "dustveil", "fallowmere"]
 
 
 def _run_named(name: str):

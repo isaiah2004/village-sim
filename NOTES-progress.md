@@ -100,3 +100,26 @@ New gate `test_intervention_library.py` (ladder / gated / effects+scored / works
 no-capital world). Updated `test_interventions.py` to reference found_mill by key (the
 first library rung is now haul_relief). golden.json UNCHANGED (interventions + the new
 tunables are off/gated by default). check.py green, 20 gates.
+
+### Item 4 — modularity breadth ✓ (branch: claude/modularity-breadth)
+
+Two new REGISTERED worlds, each a single data entry (a builder + a registry line +
+a golden row), ZERO new engine logic — each exercising a combination no prior world did:
+
+  * dustveil   -- a drought town: a CYCLICAL SUPPLY crisis (drought driver collapses
+    the water draw) relieved by CAPITAL (a cistern storing the wet season). Combines
+    a driver-driven crisis and capital relief in one world (frostpine has capital but
+    a consumption-spike crisis; tidewater is cyclical but capital-less; emberforge is
+    capital but non-cyclical). Fires: water unmet 434, contribution 531, drought price
+    15.8 vs calm 5.7.
+  * fallowmere -- a poisoned-harvest SUBSTITUTION crisis: one driver simultaneously
+    collapses grain YIELD (blight) and spikes DEMAND onto the slower-dug roots, so
+    roots go short exactly in blight. A new use of the driver (flip yield on one good,
+    demand onto another). Fires: roots unmet 209, contribution 191, blight price 11.8
+    vs calm 6.3.
+
+Golden captured ADDITIVELY: 0 pre-existing rows changed, +SCENARIO_DUSTVEIL,
++SCENARIO_FALLOWMERE (now 16 scenarios). The saltmarsh acceptance test
+(test_modularity.py) and the cross-scenario guard (test_scenarios.py, now 7 worlds)
+both cover the claim — a new world is one data entry, zero new logic. check.py green,
+20 gates.

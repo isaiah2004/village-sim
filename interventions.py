@@ -53,15 +53,19 @@ class Intervention:
 
 # ------------------------------------------------------------------ effects
 # Authored, deterministic world-changes keyed by intervention. Load-bearing sim
-# code: this is the ONLY place an intervention touches world-state.
+# code: this is the ONLY place an intervention touches world-state. Each effect is
+# generic (it acts on the scenario's crisis good / capital good, never a literal
+# resource) and is scored by the index: the goods it produces or injects are rooted
+# in the founder's lineage, so realized-effect credit flows to them as those goods
+# meet needs, and the world-state change lowers the Layer-1 problem it targets.
+def _primary(world) -> str:
+    return world.scenario.primary_resource
+
+
 def _effect_found_mill(world, agent, day: int) -> None:
-    """Establish an income-generating capital asset financed by CAPITAL rather than
-    the founder's own labour. It reuses the existing capital-goods machinery: the
-    scenario's capital good (frostpine's woodlot, emberforge's forge) yields its
-    output every day via `world._run_woodlots`, which lowers the capital-gap and
-    scarcity problems, and realized-effect credit flows back to the founder through
-    the asset's lineage lot. An existing asset is upgraded a level instead. The
-    capital good is DATA (scenario.capital), so this is not woodlot-specific."""
+    """Establish/upgrade the scenario's CAPITAL good (frostpine's woodlot,
+    emberforge's forge), financed by capital rather than the founder's labour. Its
+    daily output is rooted at the asset lot, so credit flows to the founder."""
     from agents import Asset
     spec = world._capital_spec()
     if spec is None:
@@ -75,29 +79,91 @@ def _effect_found_mill(world, agent, day: int) -> None:
     agent.assets.append(Asset(kind=spec.kind, lot_id=lot.id, built_tick=day, level=1))
 
 
+def _effect_haul_relief(world, agent, day: int) -> None:
+    """Haul in a one-time RELIEF SHIPMENT of the crisis good, rooted at the founder,
+    into their own stock -- immediate supply they then sell/distribute, credited by
+    the index as it meets needs. The early, cheap rung of the ladder."""
+    r = _primary(world)
+    qty = world.cfg.relief_shipment_qty
+    lot = world.lineage.new_lot(r, agent.id, day, "haul", qty, parents=[])
+    agent.add_holding(lot.id, r, qty)
+
+
+def _effect_open_trade_route(world, agent, day: int) -> None:
+    """Open a TRADE ROUTE: a persistent asset importing the crisis good every day,
+    rooted at the founder. It carries its own producer spec, so the world runs it
+    generically in the capital phase -- no scenario.capital entry needed. Upgrades
+    an existing route a level."""
+    from agents import Asset
+    r = _primary(world)
+    tr = next((a for a in agent.assets if a.kind == "trade_route"), None)
+    if tr is not None:
+        tr.level += 1
+        return
+    lot = world.lineage.new_lot("trade_route", agent.id, day, "build", 1.0, parents=[])
+    agent.assets.append(Asset(kind="trade_route", lot_id=lot.id, built_tick=day, level=1,
+                              output_resource=r, output_per_level=world.cfg.trade_route_output))
+
+
+def _effect_hire_crew(world, agent, day: int) -> None:
+    """Hire a CREW: a permanent boost to the founder's own output of the crisis
+    good (they gather more each day; those lots root at them, so the index credits
+    the extra supply). Labour, not infrastructure."""
+    r = _primary(world)
+    if r in agent.skill:
+        agent.skill[r] *= world.cfg.crew_skill_mult
+
+
+def _effect_endow_granary(world, agent, day: int) -> None:
+    """Endow a communal GRANARY: a buffer of the crisis good placed with the market
+    maker (rooted at the founder), so the town can buy through a spike; credited as
+    villagers draw it down to meet needs."""
+    r = _primary(world)
+    mk = next((a for a in world.agents if a.is_market_maker), None)
+    if mk is None:
+        return
+    qty = world.cfg.granary_qty
+    lot = world.lineage.new_lot(r, agent.id, day, "granary", qty, parents=[])
+    mk.add_holding(lot.id, r, qty)
+
+
 EFFECTS = {
     "found_mill": _effect_found_mill,
+    "haul_relief": _effect_haul_relief,
+    "open_trade_route": _effect_open_trade_route,
+    "hire_crew": _effect_hire_crew,
+    "endow_granary": _effect_endow_granary,
 }
 
 
 def build_library(cfg: Config) -> list[Intervention]:
-    """The pre-authored action library, as DATA. Grows by adding rows here (and one
-    effect per genuinely new world-change). The first rung: found a mill, gated by
-    capital AND a track record of contribution -- the deed-then-bigger-deed ladder."""
-    # the capital good this intervention founds, and the problem it targets, come
-    # from the scenario (frostpine: woodlot -> capital_gap:wood; emberforge: forge
-    # -> capital_gap:iron). Data, so a new world's intervention needs no new code.
+    """The pre-authored action library, as DATA -- a representative ladder of ways
+    to change the world, each gated by capital AND a track record (min_standing) and
+    each scored by the index. Rungs (rising standing): a cheap emergency shipment; a
+    permanent labour boost; founding the scenario's capital good; a communal granary;
+    a persistent trade route. All target the scenario's OWN crisis/capital problem,
+    so a new world inherits the whole library with no new code."""
     sc = getattr(cfg, "scenario", None)
-    out_res = sc.capital[0].output_resource if (sc and sc.capital) else "wood"
+    prim = sc.primary_resource if sc else "wood"
+    out_res = sc.capital[0].output_resource if (sc and sc.capital) else prim
     return [
-        Intervention(
-            key="found_mill",
-            title="Found a mill (income-generating infrastructure)",
-            targets=f"capital_gap:{out_res}",
-            capital_cost=80.0,
-            min_standing=40.0,
-            requires=("capital_goods_enabled",),
-        ),
+        # emergency one-shot supply -- the early rung, low standing, no capital system needed
+        Intervention("haul_relief", "Haul a relief shipment to the shortage",
+                     targets=f"scarcity:{prim}", capital_cost=30.0, min_standing=15.0),
+        # capital infrastructure -- founds/upgrades the scenario's capital good
+        Intervention("found_mill", "Found a mill (income-generating infrastructure)",
+                     targets=f"capital_gap:{out_res}", capital_cost=80.0, min_standing=40.0,
+                     requires=("capital_goods_enabled",)),
+        # labour -- a permanent boost to your own output of the crisis good
+        Intervention("hire_crew", "Hire a crew (boost your own output)",
+                     targets=f"scarcity:{prim}", capital_cost=60.0, min_standing=60.0),
+        # a communal buffer with the market -- eases a price spike for everyone
+        Intervention("endow_granary", "Endow a communal granary (a market buffer)",
+                     targets=f"scarcity:{prim}", capital_cost=120.0, min_standing=90.0),
+        # a persistent import channel -- the big infrastructure rung
+        Intervention("open_trade_route", "Open a trade route (persistent imports)",
+                     targets=f"scarcity:{prim}", capital_cost=150.0, min_standing=120.0,
+                     requires=("capital_goods_enabled",)),
     ]
 
 

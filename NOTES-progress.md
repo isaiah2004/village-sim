@@ -76,3 +76,27 @@ map from `agents.ARCHETYPES`, so every spawnable archetype (and any future one)
 round-trips with no per-class edit. All 5 worlds now save/load byte-identical.
 
 golden.json UNCHANGED (the fix is on the load path only). check.py green, 19 gates.
+
+### Item 3 — intervention library breadth ✓ (branch: claude/intervention-library)
+
+Grew the Layer-3 library from one action to a representative, reputation+capital-gated
+ladder, all generic (each acts on the scenario's OWN crisis/capital good) and each
+scored by the index (goods it adds are rooted in the founder's lineage):
+
+  * haul_relief   (standing 15) -- a one-time relief shipment of the crisis good.
+  * found_mill    (standing 40) -- found/upgrade the scenario's capital good.
+  * hire_crew     (standing 60) -- permanent boost to the founder's crisis-good output.
+  * endow_granary (standing 90) -- seed a communal buffer with the market maker.
+  * open_trade_route (standing 120) -- a PERSISTENT importer of the crisis good.
+
+Engine generalization to support these: `Asset` can now carry its OWN producer spec
+(output_resource/per_level + optional upkeep), so an intervention-founded producer
+(the trade route) runs generically in the capital phase with no scenario.capital
+entry; persistence carries the extra fields backward-compatibly (frostpine assets
+unchanged). The capital-phase gate is now `capital_goods_enabled` alone, so
+intervention producers work even in worlds with no scenario capital of their own.
+
+New gate `test_intervention_library.py` (ladder / gated / effects+scored / works on a
+no-capital world). Updated `test_interventions.py` to reference found_mill by key (the
+first library rung is now haul_relief). golden.json UNCHANGED (interventions + the new
+tunables are off/gated by default). check.py green, 20 gates.

@@ -37,6 +37,7 @@ STEPS = [
     ("need registry",        [sys.executable, "test_needs.py"]),
     ("problem board",        [sys.executable, "test_problems.py"]),
     ("interventions",        [sys.executable, "test_interventions.py"]),
+    ("intervention library", [sys.executable, "test_intervention_library.py"]),
     ("merchant negotiation", [sys.executable, "test_merchant.py"]),
     ("loans",                [sys.executable, "test_loans.py"]),
     ("modularity",           [sys.executable, "test_modularity.py"]),

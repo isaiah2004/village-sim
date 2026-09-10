@@ -190,7 +190,11 @@ def enc_agent(a) -> dict:
         "holdings": {_rid(r): [[lid, q] for lid, q in a.holdings[r]] for r in a.holdings},
         "skill": {_rid(r): v for r, v in a.skill.items()},
         "tool_durability_left": a.tool_durability_left,
-        "assets": [[x.kind, x.lot_id, x.built_tick, x.level] for x in a.assets],
+        "assets": [([x.kind, x.lot_id, x.built_tick, x.level]
+                    + ([x.output_resource, x.output_per_level,
+                        x.upkeep_resource, x.upkeep_per_level]
+                       if getattr(x, "output_resource", None) else []))
+                   for x in a.assets],
         "loans": [[l.lender_id, l.principal, l.interest, l.term_days, l.struck_day,
                    l.balance, l.defaulted] for l in getattr(a, "loans", [])],
         "perceived_scarcity": {_rid(r): v for r, v in a.perceived_scarcity.items()},
@@ -210,7 +214,7 @@ def dec_agent(a, d: dict) -> None:
         a.holdings.setdefault(r, deque())
     a.skill = {_res(r): v for r, v in d["skill"].items()}
     a.tool_durability_left = d["tool_durability_left"]
-    a.assets = [Asset(kind, lid, bt, lvl) for kind, lid, bt, lvl in d["assets"]]
+    a.assets = [Asset(row[0], row[1], row[2], row[3], *row[4:]) for row in d["assets"]]
     a.loans = [Loan(lender, prin, intr, term, sday, bal, defd)
                for lender, prin, intr, term, sday, bal, defd in d.get("loans", [])]
     a.perceived_scarcity = {_res(r): v for r, v in d["perceived_scarcity"].items()}

@@ -85,11 +85,23 @@ class AcceptDealAction:
 
 @dataclass
 class Asset:
-    """An owned, persistent capital good (not a consumable holding)."""
+    """An owned, persistent capital good (not a consumable holding).
+
+    Most assets are the scenario's capital good (frostpine's woodlot), run by the
+    world from `scenario.capital` by matching `kind`. An asset MAY instead carry
+    its OWN production spec (`output_resource`/`output_per_level`, optional
+    upkeep) -- an intervention-founded producer like an `open_trade_route`'s
+    trade route -- which the world runs generically without a scenario.capital
+    entry. `None` output_resource means "a scenario capital good", the historical
+    shape (so frostpine assets are byte-identical)."""
     kind: str            # "woodlot"
     lot_id: int          # its lineage lot, so realized-effect credit can flow through it
     built_tick: int
     level: int = 1       # upgradable; output and upkeep scale with level
+    output_resource: str | None = None   # self-carried producer spec (else scenario.capital)
+    output_per_level: float = 0.0
+    upkeep_resource: str | None = None
+    upkeep_per_level: float = 0.0
 
 
 @dataclass

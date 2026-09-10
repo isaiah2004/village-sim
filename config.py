@@ -199,6 +199,12 @@ class Config:
     # authored effect to world-state. OFF by default so the validated scenarios
     # never perform one and stay byte-identical; a body/demo opts in.
     interventions_enabled: bool = False
+    # tunables for the intervention library's authored effects (all Layer 3, only
+    # ever applied when interventions_enabled and the deed's gates pass -> golden safe):
+    relief_shipment_qty: float = 24.0   # haul_relief: one-time crisis-good shipment
+    trade_route_output: float = 2.0     # open_trade_route: crisis good imported/day/level
+    crew_skill_mult: float = 1.5        # hire_crew: permanent multiplier on the founder's crisis-good skill
+    granary_qty: float = 30.0           # endow_granary: crisis-good buffer seeded to the market
 
     # ----- loans / capital (Layer 3: financing an intervention via a merchant) -----
     # A merchant may lend capital to fund an intervention; the borrower repays

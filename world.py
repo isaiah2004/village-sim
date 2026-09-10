@@ -294,8 +294,10 @@ class World:
                     self._do_accept_deal(ag, action, ctx)
         # capital goods run AFTER labour: each capital good yields its output
         # resource (frostpine's woodlot -> wood, fed by upkeep food). Outputs are
-        # data (scenario.capital), so this is not wood-specific.
-        if self.cfg.capital_goods_enabled and self.scenario.capital:
+        # data (scenario.capital) or an intervention-founded producer's own spec
+        # (an open_trade_route trade route), so this is not wood-specific and works
+        # even in worlds with no scenario.capital of their own.
+        if self.cfg.capital_goods_enabled:
             for out_res, q in self._run_woodlots().items():
                 produced[out_res] = produced.get(out_res, 0.0) + q
         for r, q in produced.items():
@@ -439,24 +441,43 @@ class World:
         are the same loop. Returns {output_resource: total produced}.
         """
         totals: dict = {}
+        cap_kinds = {s.kind for s in self.scenario.capital}
         for spec in self.scenario.capital:
             for ag in self.agents:
                 for asset in ag.assets:
                     if asset.kind != spec.kind:
                         continue
-                    upkeep = spec.upkeep_per_level * asset.level
-                    fed = sum(q for _, q in ag.take(spec.upkeep_resource, upkeep))
-                    if fed < upkeep - 1e-6:
-                        if fed > 0:   # refund partial upkeep; the asset idles
-                            lot = self.lineage.new_lot(spec.upkeep_resource, ag.id, self.day, "gather", fed)
-                            ag.add_holding(lot.id, spec.upkeep_resource, fed)
-                        continue
-                    out = spec.output_per_level * asset.level
-                    lot = self.lineage.new_lot(spec.output_resource, ag.id, self.day, spec.kind, out,
-                                               parents=[(asset.lot_id, 1.0)])
-                    ag.add_holding(lot.id, spec.output_resource, out)
-                    totals[spec.output_resource] = totals.get(spec.output_resource, 0.0) + out
+                    self._run_one_asset(
+                        ag, asset, spec.output_resource, spec.output_per_level,
+                        spec.upkeep_resource, spec.upkeep_per_level, spec.kind, totals)
+        # intervention-founded producers that carry their OWN spec (e.g. an
+        # open_trade_route trade route) -- run generically, no scenario.capital row.
+        for ag in self.agents:
+            for asset in ag.assets:
+                if asset.kind in cap_kinds or not getattr(asset, "output_resource", None):
+                    continue
+                self._run_one_asset(
+                    ag, asset, asset.output_resource, asset.output_per_level,
+                    asset.upkeep_resource, asset.upkeep_per_level, asset.kind, totals)
         return totals
+
+    def _run_one_asset(self, ag, asset, out_res, out_per_level, up_res, up_per_level,
+                       kind: str, totals: dict) -> None:
+        """Run one producing asset: eat upkeep (if any), yield output rooted at the
+        asset lot so realized-effect credit flows to its owner."""
+        if up_res and up_per_level:
+            upkeep = up_per_level * asset.level
+            fed = sum(q for _, q in ag.take(up_res, upkeep))
+            if fed < upkeep - 1e-6:
+                if fed > 0:   # refund partial upkeep; the asset idles
+                    lot = self.lineage.new_lot(up_res, ag.id, self.day, "gather", fed)
+                    ag.add_holding(lot.id, up_res, fed)
+                return
+        out = out_per_level * asset.level
+        lot = self.lineage.new_lot(out_res, ag.id, self.day, kind, out,
+                                   parents=[(asset.lot_id, 1.0)])
+        ag.add_holding(lot.id, out_res, out)
+        totals[out_res] = totals.get(out_res, 0.0) + out
 
     def _do_gather(self, ag, r: Resource, ctx: Ctx) -> float:
         mult = ctx.yield_mult.get(r, 1.0) if ctx.yield_mult else self.cfg.season_yield_mult[ctx.season]

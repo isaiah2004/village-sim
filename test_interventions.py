@@ -117,7 +117,7 @@ def test_preconditions() -> list:
     if can or "standing" not in reason:
         fails.append(f"preconditions: should be locked for standing, got can={can} reason={reason!r}")
 
-    lib_iv = next(iv for iv in interventions.build_library(core.cfg))
+    lib_iv = next(iv for iv in interventions.build_library(core.cfg) if iv.key == "found_mill")
     player.bonus_earned = lib_iv.min_standing + 5    # earned standing
     player.money = 0.0                               # but broke
     menu = {iv[0]: iv for iv in core.interventions()}

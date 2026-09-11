@@ -51,6 +51,17 @@ def shoot_one(name: str, out_dir: str) -> str:
     return path
 
 
+def shoot_menu(out_dir: str) -> str:
+    """Render the start-menu (scenario picker) frame, so the picker can be reviewed
+    too, not just the worlds."""
+    g = Game(scenario=None)              # menu state
+    g.draw()
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "_menu.png")
+    pygame.image.save(g.screen, path)
+    return path
+
+
 def main(argv: list[str]) -> int:
     out_dir = "shots"
     if "--out" in argv:
@@ -64,6 +75,11 @@ def main(argv: list[str]) -> int:
             print(f"unknown scenario {p!r}; known: {known}")
             return 1
     names = picks or known
+    if not picks:                        # a full run also shoots the picker
+        try:
+            print(f"[{'menu':12}] -> {shoot_menu(out_dir)}")
+        except Exception as exc:
+            print(f"[{'menu':12}] FAILED: {exc!r}")
     for name in names:
         try:
             path = shoot_one(name, out_dir)

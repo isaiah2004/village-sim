@@ -87,6 +87,8 @@ class World:
         self.core = self._build(name)
         self.news: list[tuple[str, str]] = []
         self.queued: list[str] = []
+        self._tail_sell = None            # good whose sell line is currently the log tail
+        self._sell_acc = (0, 0.0, 0.0)    # (days, qty, value) of that running sell line
         self.has_prop = self.core.world.prop is not None
         self._log(f"{name}: {self.primary} is the crisis good; "
                   f"peak stress in the '{self.sc.crisis_phase}' phase.", "system")
@@ -150,11 +152,60 @@ class World:
     def loans(self) -> list:
         return [l for l in self.snap.loans if l.agent_id == "PLAYER"]
 
+    # ---- scenario DATA the world exposes about its market / participants ----
+    # (the same category of read as crisis_phase / capital kind / market model:
+    # generic, data-driven, no per-scenario branching or wood/food hardcoding.)
+    @property
+    def market_model(self) -> str:
+        return self.sc.market.model
+
+    def guild_info(self):
+        """The GUILD market's distinguishing state, as scenario DATA: its floor buy
+        price, daily quota, and the good it supports. None for non-guild worlds.
+        The guild bids `quota` units/day at `price` and only wins supply when the
+        market sits at/below that floor -- so it's idle exactly when real demand
+        lifts the price above it (the crisis window)."""
+        if self.sc.market.model != "guild":
+            return None
+        p = self.sc.market.params
+        good = p.get("resource", self.primary)
+        return {"good": good, "price": float(p.get("price", 0.0)),
+                "quota": float(p.get("quota", 0.0))}
+
+    def institution_demand(self):
+        """What the off-town INSTITUTIONAL BUYER wants -- (good, premium) -- from
+        scenario DATA (the demand-scoped need + the buyer's PopSpec). None if the
+        world spawns no such buyer. Lets the body name an otherwise anonymous node."""
+        good = next((n.resource for n in self.sc.needs if n.consumer == "buyer"), None)
+        if good is None:
+            return None
+        prem = 0.0
+        for ps in self.sc.population:
+            if ps.archetype == "buyer":
+                prem = float(ps.kwargs.get("premium", 0.0)); break
+        return {"good": good, "premium": prem}
+
     def _log(self, text: str, tag: str = "system") -> None:
-        if self.news and self.news[-1][0] == text:     # collapse consecutive repeats
+        self._tail_sell = None                          # any other line breaks a sell run
+        if self.news and self.news[-1][0] == text:      # collapse consecutive repeats
             return
         self.news.append((text, tag))
         self.news = self.news[-self.NEWS_MAX:]
+
+    def _push_sell(self, good: str, qty: float, val: float) -> None:
+        """Log a sell, COALESCING consecutive same-good sells into one running line
+        with a day count and totals -- so a stretch of auto-run selling doesn't bury
+        the contribution / intervention news under near-identical lines."""
+        if self._tail_sell == good and self.news and self.news[-1][1] == "sold":
+            n, q, v = self._sell_acc
+            n, q, v = n + 1, q + qty, v + val
+            self._sell_acc = (n, q, v)
+            self.news[-1] = (f"Sold {q:.0f} {good} over {n} days for {v:.0f}g.", "sold")
+        else:
+            self._tail_sell = good
+            self._sell_acc = (1, qty, val)
+            self.news.append((f"Sold {qty:.0f} {good} for {val:.0f}g.", "sold"))
+            self.news = self.news[-self.NEWS_MAX:]
 
     # ---- input -> intent (the only way this body touches the world) ----
     def gather(self, good: str) -> None:
@@ -247,7 +298,7 @@ class World:
         """Fold the day's generic contract events into the semantic news feed.
         Every branch reads only contract event fields -- no scenario knowledge."""
         earned = 0.0
-        sold: dict = {}
+        sold: dict = {}          # good -> [qty, value] this day (coalesced after the loop)
         cold: set[str] = set()
         for ev in events:
             if isinstance(ev, C.ContributionPaid) and ev.agent_id == "PLAYER":
@@ -255,8 +306,8 @@ class World:
             elif isinstance(ev, C.Settled):
                 r = _rv(ev.resource)
                 if ev.side == "sell":
-                    sold[r] = sold.get(r, 0.0) + ev.qty
-                    self._log(f"Sold {ev.qty:.0f} {r} for {ev.value:.0f}g.", "sold")
+                    acc = sold.setdefault(r, [0.0, 0.0])
+                    acc[0] += ev.qty; acc[1] += ev.value
                 else:
                     self._log(f"Bought {ev.qty:.0f} {r} for {ev.value:.0f}g.", "bought")
             elif isinstance(ev, C.Shortage) and ev.agent_id != "PLAYER":
@@ -278,6 +329,8 @@ class World:
                     self._log(f"Loan to {ev.lender_id} paid off.", "loan")
                 elif ev.event == "defaulted":
                     self._log(f"You DEFAULTED on {ev.lender_id} -- word will spread.", "starving")
+        for good, (qty, val) in sold.items():
+            self._push_sell(good, qty, val)
         if earned > 0.05:
             self._log(f"+{earned:.0f} contribution -- your supply met a real need.", "contribution")
         if cold:
@@ -314,6 +367,7 @@ class Game:
         self.f_xs = pygame.font.SysFont("segoeui,arial", 12)
         self.mono = pygame.font.SysFont("consolas,monospace", 15)
         self.mono_sm = pygame.font.SysFont("consolas,monospace", 12)
+        self._font_cache: dict = {}
         self.names = scen.scenario_names()
         self.world: World | None = None
         self.toast = ("", 0)
@@ -344,7 +398,7 @@ class Game:
         W, H, pad = self.W, self.H, 14
         self.lay = {}
         self.lay["top"] = R(pad, 10, W - 2 * pad, 66)
-        bar_h = 104
+        bar_h = 118
         self.lay["bar"] = R(pad, H - bar_h, W - 2 * pad, bar_h - pad)
         y0 = self.lay["top"].bottom + 10
         y1 = self.lay["bar"].top - 10
@@ -381,25 +435,25 @@ class Game:
         defs: list[tuple[str, str, callable, bool]] = []
         # one gather button per consumable good (label, hint, callback, enabled)
         for i, g in enumerate(w.consumables):
-            defs.append((f"Gather {g[:11]}", f"[{i+1}]",
+            defs.append((f"Gather {g}", f"[{i+1}]",
                          (lambda good=g: w.gather(good)), True))
         if w.has_capital:
             defs.append((w.capital_label(), "[b]", w.build, True))
-        defs.append((f"Warn {w.primary[:8]}", "[w]", w.warn, w.has_prop))
+        defs.append((f"Warn {w.primary}", "[w]", w.warn, w.has_prop))
         defs.append(("Perform", "[p]", w.perform_ready, True))
         defs.append(("Fund (deal)", "[f]", w.fund_first, True))
         defs.append(("Auto day", "[a]", w.auto_day, True))
         # lay them across the top row of the bar
         n = len(defs); gap = 6
         bw = (bar.w - (n - 1) * gap) / max(n, 1)
-        by = bar.y + 4; bh = 40
+        by = bar.y + 6; bh = 42
         self.buttons = []
         for i, (label, hint, cb, en) in enumerate(defs):
             rect = R(int(bar.x + i * (bw + gap)), by, int(bw), bh)
             self.buttons.append(Button(rect, cb, label=label, hint=hint, enabled=en))
         # trade buttons live in the market panel (built there); end-day is drawn
-        # as an accent button on the bar's second row.
-        self.end_rect = R(bar.right - 150, bar.bottom - 34, 150, 30)
+        # as an accent button on the bar's second row, kept clear of the window edge.
+        self.end_rect = R(bar.right - 150, bar.y + 56, 150, 36)
 
     # ------------------------------------------------------------ input
     def act_key(self, key) -> None:
@@ -487,7 +541,8 @@ class Game:
         pygame.draw.rect(self.screen, fill, rect, border_radius=8)
         pygame.draw.rect(self.screen, EMBER if hot and enabled else LINE, rect, width=1, border_radius=8)
         c = INK if enabled else (70, 78, 90)
-        self._text(self._clip(label, self.f_sm, rect.w - 8), self.f_sm, c,
+        font = self._fit_font(label, rect.w - 10)       # shrink to fit; never truncate mid-word
+        self._text(self._clip(label, font, rect.w - 8), font, c,
                    rect.centerx, rect.y + 6, center=True)
         if hint:
             self._text(hint, self.mono_sm, MUTE if enabled else (60, 66, 78),
@@ -499,6 +554,23 @@ class Game:
         while s and font.size(s + "...")[0] > maxw:
             s = s[:-1]
         return s + "..."
+
+    def _font(self, size, bold=False):
+        key = (size, bold)
+        f = self._font_cache.get(key)
+        if f is None:
+            f = pygame.font.SysFont("segoeui,arial", size, bold=bold)
+            self._font_cache[key] = f
+        return f
+
+    def _fit_font(self, text, maxw, base=14, floor=9, bold=False):
+        """Largest body font (base..floor px) whose render of `text` fits `maxw`, so
+        a long resource id shrinks to fit a button/chip rather than truncating
+        mid-word. Falls back to the floor size (the caller clips only then)."""
+        for size in range(base, floor - 1, -1):
+            if self._font(size, bold).size(text)[0] <= maxw:
+                return self._font(size, bold)
+        return self._font(floor, bold)
 
     def _wrap(self, text, font, maxw):
         words, lines, cur = text.split(), [], ""
@@ -616,7 +688,7 @@ class Game:
         x += 78
         for g in w.consumables:
             q = me.holdings.get(g, 0.0)
-            chip = f"{g[:11]} {q:.0f}"
+            chip = f"{g} {q:.0f}"
             cw = self.mono_sm.size(chip)[0] + 14
             if x + cw > v.right - 12:
                 break
@@ -663,6 +735,12 @@ class Game:
         pygame.draw.circle(self.screen, BG, (int(x), int(y)), rad, width=2)
         if a.is_player:
             self._text("YOU", self.mono_sm, BG, int(x), int(y) - 8, center=True)
+        elif a.kind == "institution":
+            # the off-town demand-side buyer -- name it (and the good it wants) so it
+            # isn't an anonymous dot; this is the point of a demand-event world.
+            idem = w.institution_demand()
+            label = f"BUYER: {idem['good']}" if idem else "BUYER"
+            self._text(label, self.mono_sm, BELIEF, int(x), int(y) + rad + 3, center=True)
         return a, int(x), int(y), rad
 
     def _draw_speech(self, ax, ay, mind, bounds) -> None:
@@ -687,7 +765,10 @@ class Game:
         self._text("THE AI ACCOUNTANT", self.mono_sm, EMBER, acc.x + 14, acc.y + 10)
         self._text("fair value & unmet need -- what only you can see", self.f_xs, MUTE, acc.x + 14, acc.y + 28)
         goods = w.consumables
-        top = acc.y + 50; avail_h = acc.bottom - top - 8
+        gi = w.guild_info()                    # guild market's distinguishing state (or None)
+        idem = w.institution_demand()          # the demand-side buyer's good/premium (or None)
+        foot = (18 if gi else 0) + (16 if idem else 0)
+        top = acc.y + 50; avail_h = acc.bottom - top - 8 - foot
         step = avail_h / max(len(goods), 1)
         self.trade_rects = []
         for i, g in enumerate(goods):
@@ -696,7 +777,9 @@ class Game:
             ref = m.ref_price if m else 0.0
             fair = m.fair_price if m else 0.0
             unmet = w.snap.village_unmet.get(g, 0.0)
-            self._text(g.upper()[:14], self.f_h2 if step > 60 else self.f, INK, acc.x + 14, y)
+            name_font = self._fit_font(g.upper(), acc.right - 140 - (acc.x + 14),
+                                       base=20 if step > 60 else 16, floor=13, bold=True)
+            self._text(g.upper(), name_font, INK, acc.x + 14, y)
             self._text(f"mkt {ref:5.1f}  fair {fair:5.1f}", self.mono, MUTE, acc.x + 14, y + 24)
             # valuation cue (generic: undervalued -> supply it; overpriced -> sell)
             if fair > 0 and ref < fair * 0.85:
@@ -714,6 +797,22 @@ class Game:
             self._btn(br, "Buy", "", enabled=True)
             self.trade_rects.append((sr, g, "sell"))
             self.trade_rects.append((br, g, "buy"))
+        # footer: what makes THIS market model / participant mix distinct, so the
+        # guild and its demand-side buyer aren't invisible (guildhall's whole point).
+        fy = acc.bottom - foot + 2
+        if gi:
+            m = w.market(gi["good"]); ref = m.ref_price if m else 0.0
+            active = ref <= gi["price"] + 1e-9
+            state = "holding the price at its floor" if active else "idle -- demand is above its floor"
+            self._text(self._clip(
+                f"GUILD floor {gi['price']:.0f}/u · quota {gi['quota']:.0f}/day · {state}",
+                self.f_xs, acc.w - 28), self.f_xs, GOLD, acc.x + 14, fy)
+            fy += 16
+        if idem:
+            prem = f" (+{(idem['premium'] - 1) * 100:.0f}% premium)" if idem["premium"] > 1 else ""
+            self._text(self._clip(
+                f"demand-side buyer wants {idem['good']}{prem} during '{w.sc.crisis_phase}'",
+                self.f_xs, acc.w - 28), self.f_xs, BELIEF, acc.x + 14, fy)
 
     # ---- side panel: standing, problems, loans ----
     def _draw_side(self) -> None:
@@ -722,6 +821,14 @@ class Game:
         self._text("YOUR STANDING", self.mono_sm, MUTE, st.x + 14, st.y + 8)
         self._text(f"{rep.standing:.0f}", self.f_h2, EMBER, st.x + 14, st.y + 24)
         self._text(rep.descriptor, self.f_sm, GOLD, st.x + 60, st.y + 30)
+        # capital-good readout, when the contract reports the player owns one
+        # (populated for the woodlot-kind capital good; the scenario names the kind).
+        me = w.me()
+        if me.woodlot_level > 0:
+            kind = w.sc.capital[0].kind if w.sc.capital else "capital"
+            self._text(self._clip(f"{kind} Lv{me.woodlot_level}  +{me.woodlot_output:.1f}/day",
+                                   self.f_xs, st.w // 2 - 20),
+                       self.f_xs, GREEN, st.right - 14, st.y + 30, right=True)
         # problems (Layer 1): worst-first, with a severity bar
         self._text("LIVE PROBLEMS", self.mono_sm, MUTE, st.x + 14, st.y + 52)
         y = st.y + 70
@@ -761,11 +868,11 @@ class Game:
         ready = [iv[0] for iv in ivs if iv[5]]
         strip = ("ready: " + ", ".join(ready)) if ready else \
                 ("interventions locked (build standing/capital)" if ivs else "")
-        self._text(self._clip(strip, self.f_xs, bar.w - 320), self.f_xs,
-                   GOLD if ready else MUTE, bar.x + 2, bar.bottom - 30)
+        self._text(self._clip(strip, self.f_xs, bar.w - 170), self.f_xs,
+                   GOLD if ready else MUTE, bar.x + 2, bar.y + 58)
         q = ", ".join(w.queued) if w.queued else "nothing yet"
-        self._text(self._clip("PLANNED: " + q, self.f_xs, bar.w - 320), self.f_xs,
-                   MUTE if not w.queued else INK, bar.x + 2, bar.bottom - 14)
+        self._text(self._clip("PLANNED: " + q, self.f_xs, bar.w - 170), self.f_xs,
+                   MUTE if not w.queued else INK, bar.x + 2, bar.y + 76)
         self._btn(self.end_rect, "End Day", "Enter", accent=True)
 
     # ---- end overlay ----

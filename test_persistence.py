@@ -15,6 +15,7 @@ import json
 from dataclasses import asdict
 
 import contract as C
+import scenario as scen
 from agents import Dependent, MarketMaker, SpawnSpec, Villager
 from config import Config, Resource
 from simcore import SimCore
@@ -93,6 +94,74 @@ def _run_case(propagation: bool) -> None:
     print(f"  [{tag}] identical for {CONT} days after reload; "
           f"final score={a.score('PLAYER'):.3f}, welfare wood-unmet="
           f"{a.welfare()['village_unmet_wood']:.2f}")
+
+
+def _scenario_intents(prim: str, cons: list, day: int) -> list:
+    """A deterministic script over a SCENARIO's own goods (string resource ids),
+    keyed purely on the day so both cores get identical inputs."""
+    out = [C.Gather(prim)] + [C.Gather(g) for g in cons if g != prim]
+    if day % 5 == 0:
+        out.append(C.BuildWoodlot())
+    if day % 3 == 0:
+        out.append(C.Trade(prim, "sell", 4.0, 3.0))
+    if day % 7 == 0:                       # a player warning: injects a claim on `prim`
+        out.append(C.Speak(prim, 0.8, True, "player_warning", authority=0.85))
+    return out
+
+
+def _run_scenario_case(name: str, warm: int, cont: int) -> None:
+    """Round-trip a NAMED scenario world with STRING resource ids + propagation,
+    saving deep enough that first-hand shortage witnessing has seeded string-keyed
+    beliefs (and pending string-keyed claims). This is the exact shape that used to
+    crash serialize (`'str' has no attribute 'value'`); it must now JSON round-trip
+    and continue byte-identically, just like the frostpine case."""
+    def build():
+        cfg = scen.make_config(name)
+        cfg.capital_goods_enabled = True
+        cfg.reward_at_fair_value = True
+        return SimCore(config=cfg, seed=7, propagation=True,
+                       population=scen.build_population(scen.get_scenario(name)))
+
+    sc = scen.get_scenario(name)
+    prim = sc.primary_resource
+    cons = [r.id for r in sc.resources if r.consumable]
+
+    def drive(core, day):
+        core.begin_turn()
+        for intent in _scenario_intents(prim, cons, day):
+            core.submit(intent)
+        core.commit_turn()
+        return core.snapshot(), core.drain_events(), core.score("PLAYER")
+
+    a = build()
+    for d in range(warm):
+        drive(a, d)
+
+    # the beliefs seeded by witnessing scarcity are keyed by the string resource id
+    kinds = {type(k).__name__ for by in a.world.prop.beliefs.values() for k in by}
+    assert "str" in kinds, f"[{name}] expected string-keyed beliefs by day {warm}; got {kinds}"
+
+    blob = a.serialize()
+    wire = json.dumps(blob)                       # must not raise (the bug crashed here)
+    b = SimCore.from_save(json.loads(wire))
+
+    assert asdict(a.snapshot()) == asdict(b.snapshot()), f"[{name}] snapshots differ right after load"
+    assert a.day == b.day == warm
+    for d in range(warm, warm + cont):
+        sa, ea, sca = drive(a, d)
+        sb, eb, scb = drive(b, d)
+        assert asdict(sa) == asdict(sb), f"[{name}] snapshot diverged on day {d}"
+        assert _events_key(ea) == _events_key(eb), f"[{name}] events diverged on day {d}"
+        assert abs(sca - scb) < 1e-12, f"[{name}] score diverged on day {d}"
+    assert a.welfare() == b.welfare(), f"[{name}] final welfare differs"
+    print(f"  [{name}] string-resource world round-tripped byte-identical: "
+          f"saved day {warm} (belief key types {sorted(kinds)}), identical for {cont} more days")
+
+
+def test_roundtrip_scenario_string_ids():
+    # tidewater: fish/grain (no enum members) on a 240-day year -- run 110 days so
+    # the storm's shortages have seeded witness beliefs before the save.
+    _run_scenario_case("tidewater", warm=110, cont=20)
 
 
 def test_roundtrip_propagation_on():

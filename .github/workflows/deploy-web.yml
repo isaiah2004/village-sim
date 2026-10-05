@@ -1,0 +1,59 @@
+name: Deploy frostpine web build
+
+# Builds the pygbag (WASM) web version of the frostpine pixel game and publishes it
+# to GitHub Pages. Runs when game_pixel.py (or this workflow) lands on main, or on
+# demand from the Actions tab. GitHub's own runners do the build + publish, so no
+# local network access or manual upload is needed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "game_pixel.py"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# one deploy at a time; let an in-flight run finish rather than cancelling it
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pygame + pygbag
+        run: python -m pip install --upgrade pip pygame pygbag
+
+      - name: Build the web bundle
+        run: python -m pygbag --build --app_name frostpine --title "Frostpine" game_pixel.py
+
+      # enablement:true turns Pages on (source = GitHub Actions) if it isn't already,
+      # so there's no manual settings step the first time.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload the built site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

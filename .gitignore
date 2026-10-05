@@ -15,3 +15,4 @@ Thumbs.db
 # scratch screenshots / saves (dev only)
 shot_*.png
 *.save.json
+shots/

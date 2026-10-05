@@ -125,11 +125,14 @@ def dec_population(data: list | None) -> list | None:
 
 # ----------------------------------------------------------------------- claim
 def _enc_claim(c: Claim) -> list:
-    return [c.resource.value, c.magnitude, c.objective_truth, c.root_id, c.origin_day]
+    # a claim's resource is an enum for a player warning (Speak(Resource.WOOD, ...))
+    # but a string for a witness/event claim on a scenario id ('fish'); normalize
+    # with _rid so a pending scheduled injection of either kind serializes.
+    return [_rid(c.resource), c.magnitude, c.objective_truth, c.root_id, c.origin_day]
 
 
 def _dec_claim(x: list) -> Claim:
-    return Claim(Resource(x[0]), x[1], x[2], x[3], x[4])
+    return Claim(_res(x[0]), x[1], x[2], x[3], x[4])
 
 
 # --------------------------------------------------------------------- lineage
@@ -229,8 +232,15 @@ def enc_prop(prop) -> dict:
     return {
         "transmissions_today": prop.transmissions_today,
         "adj": {aid: sorted(ns) for aid, ns in prop.graph.adj.items()},
+        # belief keys are resource ids. They may be the core Resource ENUM (a
+        # player warning enters as Speak(Resource.WOOD, ...)) OR a plain STRING (a
+        # first-hand witness of scarcity is injected keyed by the scenario's
+        # consumable id, which is a string -- and every scenario resource beyond
+        # wood/food is a string with no enum member at all). Normalize to the id
+        # string with _rid so BOTH kinds serialize (the old `r.value` crashed on a
+        # string key -- the whole reason a winter/shortage save blew up).
         "beliefs": {
-            aid: {r.value: [b.value, b.confidence, sorted(b.roots), b.last_heard, b.generation]
+            aid: {_rid(r): [b.value, b.confidence, sorted(b.roots), b.last_heard, b.generation]
                   for r, b in by.items()}
             for aid, by in prop.beliefs.items()
         },
@@ -242,8 +252,10 @@ def dec_prop(prop, d: dict) -> None:
     prop.graph.adj = {aid: set(ns) for aid, ns in d["adj"].items()}
     prop.beliefs = {}
     for aid, by in d["beliefs"].items():
+        # _res mirrors _rid on the way back: the core enum for wood/food, the plain
+        # string for scenario ids like 'fish'/'grain' (which have no enum member).
         prop.beliefs[aid] = {
-            Resource(r): Belief(val, conf, set(roots), lh, gen)
+            _res(r): Belief(val, conf, set(roots), lh, gen)
             for r, (val, conf, roots, lh, gen) in by.items()
         }
 

@@ -30,6 +30,17 @@ from __future__ import annotations
 import copy
 import sys
 
+# In the browser (pygbag/WASM) this file is the autorun entry, so launch the pixel
+# game instead of the desktop scenario analysis below. On the desktop sys.platform
+# is normal and we fall through, so `python main.py` runs the scenarios unchanged.
+if sys.platform == "emscripten":
+    import asyncio
+
+    from game_pixel import main as _web_main
+
+    asyncio.run(_web_main())
+    raise SystemExit
+
 from agents import Merchant, SpawnSpec, Villager
 from config import Config
 from world import World

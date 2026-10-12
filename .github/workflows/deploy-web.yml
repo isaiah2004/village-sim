@@ -40,10 +40,10 @@ jobs:
         run: python -m pip install --upgrade pip pygame pygbag
 
       - name: Build the web bundle
-        # --ume_block 0 disables pygbag's "click to start" gate so the game auto-runs
-        # (we have no audio, so no user gesture is needed); without it the page loads
-        # the engine and then sits idle on a blank screen until clicked.
-        run: python -m pygbag --build --ume_block 0 --app_name frostpine --title "Frostpine" game_pixel.py
+        # pygbag autoruns the bundle's main.py; main.py launches the pixel game in
+        # the browser (sys.platform == "emscripten"). --ume_block 0 disables the
+        # "click to start" gate (no audio, so no user gesture is needed).
+        run: python -m pygbag --build --ume_block 0 --app_name frostpine --title "Frostpine" main.py
 
       # enablement:true turns Pages on (source = GitHub Actions) if it isn't already,
       # so there's no manual settings step the first time.

@@ -682,8 +682,10 @@ async def main() -> None:
         pressed = pygame.key.get_pressed()
         game.tick(events, lambda k: pressed[k])
         pygame.display.flip()
-        game.clock.tick(60)
-        await asyncio.sleep(0)           # hand the frame back to the browser
+        # NOTE: no clock.tick() here -- a blocking frame cap starves the browser's
+        # single thread. `await asyncio.sleep(0)` hands the frame back and the
+        # browser's own animation loop paces us.
+        await asyncio.sleep(0)
     pygame.quit()
 
 

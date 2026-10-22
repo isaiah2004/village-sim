@@ -33,13 +33,17 @@ import sys
 # In the browser (pygbag/WASM) this file is the autorun entry, so launch the pixel
 # game instead of the desktop scenario analysis below. On the desktop sys.platform
 # is normal and we fall through, so `python main.py` runs the scenarios unchanged.
+#
+# pygbag SOURCES this file from inside an already-running event loop, so the game
+# is scheduled as a task (asyncio.run would try to start a second loop) and this
+# returns immediately -- the loader must finish after us to reveal and size the
+# canvas. Nothing here may block or raise, or the page stays blank.
 if sys.platform == "emscripten":
     import asyncio
 
     from game_pixel import main as _web_main
 
-    asyncio.run(_web_main())
-    raise SystemExit
+    asyncio.ensure_future(_web_main())
 
 from agents import Merchant, SpawnSpec, Villager
 from config import Config
@@ -106,5 +110,5 @@ def main(argv: list[str]) -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and sys.platform != "emscripten":
     raise SystemExit(main(sys.argv[1:]))
